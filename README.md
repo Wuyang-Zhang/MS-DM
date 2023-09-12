@@ -81,3 +81,34 @@ If you find this work or code useful, please cite:
   year={2020},
 }
 ```
+
+
+## 注意：
+-main 分支是改进的可以同时预测两种害虫的MS-DM网络
+
+
+
+### 目录结构
+|
+|--data # 主要存放
+    |
+    data-used-by-train-val-test  # 存放一种类的训练
+    |   
+    data-used-by-train-val-test-another   # 存放另一种类的训练
+    |
+    images # 数据训练辅助
+    |
+    mats    # 数据训练辅助 生成.mat
+    |
+    mats-1    # 数据训练辅助 生成.mat
+    
+|--datasets
+    |
+    annotation # 用不到 可以直接生成.mat
+    |
+    imgs    # 用不到 可以直接生成.mat
+
+|--losses
+|--preprocess
+|--...
+
