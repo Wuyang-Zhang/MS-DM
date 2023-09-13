@@ -235,18 +235,18 @@ class Crowd_qnrf(Base):
 
             if os.path.exists(img_path.replace('data-used-by-train-val-test','data-used-by-train-val-test-another').replace('jpg', 'npy')) and not os.path.exists(gd_path):
                 keypoints1 = np.load(img_path.replace('data-used-by-train-val-test','data-used-by-train-val-test-another').replace('jpg', 'npy'))
-                print('wf:' ,0,'ff',len(keypoints1))
+                # print('wf:' ,0,'ff',len(keypoints1))
                 return img, 0, len(keypoints1),name  
             
             elif not os.path.exists(img_path.replace('data-used-by-train-val-test','data-used-by-train-val-test-another').replace('jpg', 'npy')) and os.path.exists(gd_path):  
                 keypoints = np.load(gd_path)
-                print('wf:' ,len(keypoints),'ff',0)
+                # print('wf:' ,len(keypoints),'ff',0)
                 return img,len(keypoints), 0,name 
             
             elif os.path.exists(img_path.replace('data-used-by-train-val-test','data-used-by-train-val-test-another').replace('jpg', 'npy')) and os.path.exists(gd_path):  
                 keypoints = np.load(gd_path)
                 keypoints1 = np.load(img_path.replace('data-used-by-train-val-test','data-used-by-train-val-test-another').replace('jpg', 'npy'))
-                print('wf:' ,len(keypoints),'ff',len(keypoints1))
+                # print('wf:' ,len(keypoints),'ff',len(keypoints1))
                 return img,len(keypoints), len(keypoints1),name 
             
             else:
