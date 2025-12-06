@@ -129,11 +129,6 @@ python preprocess\preprocess_dataset_nwpu.py
 i = i.strip().split(',')[0] 
 ```
 
- 因为有的图片路径中包含空格 所以这里以空格分割改为逗号分割
-
-运行之后data\data-used-by-train-val-test\test 没有.npy   ._densitymap.npy
-
-没关系 可以以后再生成  训练只用到 train  val文件中的东西
 
 ### Train
 
@@ -250,70 +245,6 @@ run  test.py 文件
    run test-v1.py
 
 ## Visualization
-
-### CBAMB
-
-#### 修改 model文件 加入CMBA 模块 并权重初始化 应该是model.py  或models-v2.py
-
-#### run   D:\download\DM-Count-master\DM-Count-master\Modify-the-weights-save-the-new.py
-
-根据已经训练好的 权重  生成新的权重文件   **"pretrained_models\new_ok_model_qnrf.pth"**
-
-#### 然后使用冻结训练 微调的方法  在train_helper.py or train_helper--v2.py
-
-```python
-    def train(self):
-        """training process"""
-        args = self.args
-        for epoch in range(self.start_epoch, args.max_epoch + 1):
-            self.logger.info('-' * 5 + 'Epoch {}/{}'.format(epoch, args.max_epoch) + '-' * 5)
-            self.epoch = epoch
-
-            #======================add=======================================
-            if epoch <= 500:
-                # Freeze layers except CBAM module after 500 epochs
-                for name, param in self.model.named_parameters():
-                    if "cbam" not in name:
-                        param.requires_grad = False
-                self.optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), lr=args.lr)
-            else:
-                # Unfreeze all layers after 500 epochs
-                for name, param in self.model.named_parameters():
-                    param.requires_grad = True
-                self.optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, self.model.parameters()), lr=args.lr)
-            #====================================================================
-            self.train_eopch()
-            if epoch % args.val_epoch == 0 and epoch >= args.val_start:
-                self.val_epoch()
-```
-
-**目录结构详解**
-
-datasets\crowd_test.py   用来test文件 生成数据集
-
-##**相应的修改**##**
-
-### 改了相应的预测回归层  只有一个密度图 但是两个通道  最后分
-
-models_2_desity.py
-pretrained_models\new_2_density_model_qnrf.pth
-train_helper_2_density.py
-train_2_density.py
-
-最后只运行  train_2_density.py 即可
-
-#-----------------------------------------------------------------------------------
-
-### 原来从reg_layer那就开始改的的
-
-models.py
-train_helper.py
-pretrained_models\new_ok_model_qnrf.pth
-train.py
-最后只运行  train.py 即可
-
-
-![image-20230913094540221](image/README/image-20230913094540221.png)
 
 ## Deployment
 

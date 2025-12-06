@@ -3,3 +3,12 @@ pretrained_models/
 
 data/data-used-by-train-val-test/
 data/data-used-by-train-val-test-another/
+
+test_images-pre-result-full/
+
+
+# system
+.history/
+.vscode/
+__pycache__
+**/__pycache__

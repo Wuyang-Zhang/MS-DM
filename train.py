@@ -11,7 +11,7 @@ def str2bool(v):
 def parse_args():
     parser = argparse.ArgumentParser(description='Train')
     parser.add_argument('--data-dir', default=r'data\data-used-by-train-val-test', help='data path')     # 数据存放文件夹
-    # add
+
     parser.add_argument('--data-dir_1', default=r'data\data-used-by-train-val-test-another', help='data path')     # 数据存放文件夹
 
     parser.add_argument('--dataset', default='qnrf', help='dataset name: qnrf, nwpu, sha, shb')
