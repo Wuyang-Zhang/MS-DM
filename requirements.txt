@@ -1,8 +1,10 @@
-torch==1.2.0
-torchvision==0.4.0 -f https://download.pytorch.org/whl/torch_stable.html
-numpy>=1.16.5
-scipy>=1.3.0
-opencv-python
-gdown
-pillow==6.2.2
-gradio
+# Recommended runtime for current NVIDIA GPUs and unified test.py.
+# Install a CUDA-enabled PyTorch build suitable for your system first:
+# https://pytorch.org/get-started/locally/
+torch>=2.1
+torchvision>=0.16
+numpy>=1.21
+scipy>=1.7
+opencv-python>=4.8
+Pillow>=9.0
+tensorboardX>=2.6

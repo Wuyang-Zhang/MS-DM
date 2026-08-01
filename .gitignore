@@ -1,14 +1,55 @@
 ckpts/
+weights/
+docs/
 pretrained_models/
-
+tmp/
 data/data-used-by-train-val-test/
 data/data-used-by-train-val-test-another/
 
 test_images-pre-result-full/
 
 
-# system
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.conda/
+
+# Training logs and generated outputs
+runs/
+log/
+logs/
+events.out.tfevents.*
+wandb/
+output/
+outputs/
+*.log
+
+# Notebook and editor caches
+.ipynb_checkpoints/
 .history/
 .vscode/
-__pycache__
-**/__pycache__
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak

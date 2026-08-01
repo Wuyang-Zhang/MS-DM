@@ -48,6 +48,9 @@ class Trainer(object):
 
     def setup(self):
         args = self.args
+        os.makedirs(args.output_dir, exist_ok=True)
+        os.makedirs(args.tensorboard_dir, exist_ok=True)
+
         sub_dir = 'input-{}_wot-{}_wtv-{}_reg-{}_nIter-{}_normCood-{}'.format(
             args.crop_size, args.wot, args.wtv, args.reg, args.num_of_iter_in_ot, args.norm_cood)
 
@@ -103,7 +106,8 @@ class Trainer(object):
         
 
 
-        self.model = vgg19()
+        # A full MS-DM checkpoint already contains the VGG19 backbone weights.
+        self.model = vgg19(pretrained=not bool(args.resume))
         self.model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
@@ -178,6 +182,7 @@ class Trainer(object):
 
 
             self.model.train()  # Set model to training mode
+            num_train_batches = len(self.dataloaders['train'])
 
             #===================================================
             # the logger writer
@@ -345,6 +350,23 @@ class Trainer(object):
                     epoch_loss_ff.update(loss_ff.item(), N)
                     epoch_mse_ff.update(np.mean(pred_err1 * pred_err1), N)
                     epoch_mae_ff.update(np.mean(abs(pred_err1)), N)              
+
+                    if (step + 1) % args.log_interval == 0 or (step + 1) == num_train_batches:
+                        elapsed = time.time() - epoch_start
+                        seconds_per_batch = elapsed / (step + 1)
+                        eta = seconds_per_batch * (num_train_batches - step - 1)
+                        gpu_memory = torch.cuda.memory_allocated(self.device) / (1024 ** 3)
+                        progress = (
+                            'Epoch {} Batch {}/{} ({:.1f}%), Loss: {:.4f}, '
+                            'WF: {:.4f}, FF: {:.4f}, {:.1f}s/batch, ETA: {:.1f}s, '
+                            'GPU memory: {:.2f} GB'
+                        ).format(
+                            self.epoch, step + 1, num_train_batches,
+                            100.0 * (step + 1) / num_train_batches,
+                            loss.item(), loss_wf.item(), loss_ff.item(),
+                            seconds_per_batch, eta, gpu_memory)
+                        print(progress, flush=True)
+                        self.logger.info(progress)
 
 
 

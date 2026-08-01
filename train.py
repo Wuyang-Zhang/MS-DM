@@ -23,7 +23,7 @@ def parse_args():
     # 要求使用反斜杠符
     pretrained_models_dict = {
 
-        "1": 'pretrained_models/new_ok_model_qnrf.pth',  # MA-DM + Data_equalization
+        "1": 'pretrained_models/msdm_final_v3_legacy.pth',
 
     }
 
@@ -41,6 +41,8 @@ def parse_args():
     parser.add_argument('--device', default='0', help='assign device')
     parser.add_argument('--num-workers', type=int, default=0,  # Caught IndexError in DataLoader worker process 0.
                         help='the num of training process')
+    parser.add_argument('--log-interval', type=int, default=1,
+                        help='print training progress every N batches')
     parser.add_argument('--crop-size', type=int, default=512,    # 图片尺寸
                         help='the crop size of the train image')
     parser.add_argument('--wot', type=float, default=0.1, help='weight on OT loss')   

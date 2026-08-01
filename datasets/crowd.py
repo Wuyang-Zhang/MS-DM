@@ -18,7 +18,7 @@ def random_crop(im_h, im_w, crop_h, crop_w):
     return i, j, crop_h, crop_w
 
 
-def gen_discrete_map(im_height, im_width, points):
+def _legacy_gen_discrete_map(im_height, im_width, points):
     """
     func: generate the discrete map.
     points: [num_gt, 2], for each row: [width, height]
@@ -53,6 +53,24 @@ def gen_discrete_map(im_height, im_width, points):
 
     return discrete_map
 
+
+
+def gen_discrete_map(im_height, im_width, points):
+    """Generate a count-preserving discrete map from ``(x, y)`` points."""
+    discrete_map = np.zeros((im_height, im_width), dtype=np.float32)
+    num_gt = len(points)
+    if num_gt == 0:
+        return discrete_map
+
+    points_np = np.asarray(points).round().astype(np.int64)
+    p_h = np.clip(points_np[:, 1], 0, im_height - 1)
+    p_w = np.clip(points_np[:, 0], 0, im_width - 1)
+    p_index = torch.from_numpy(p_h * im_width + p_w).long()
+    flat_map = torch.zeros(im_width * im_height, dtype=torch.float32)
+    flat_map.scatter_add_(0, p_index, torch.ones(num_gt))
+    discrete_map = flat_map.view(im_height, im_width).numpy()
+    assert np.sum(discrete_map) == num_gt
+    return discrete_map
 
 
 class Base(data.Dataset):
@@ -143,27 +161,18 @@ class Base(data.Dataset):
 
         # 进行图片翻转
 
-        if len(keypoints) > 0:
-            if random.random() > 0.5:
-                img = F.hflip(img)
-                gt_discrete = np.fliplr(gt_discrete)
-                keypoints[:, 0] = w - keypoints[:, 0]
-        else:
-            if random.random() > 0.5:
-                img = F.hflip(img)
-                gt_discrete = np.fliplr(gt_discrete)
+        do_flip = random.random() > 0.5
+        if do_flip:
+            img = F.hflip(img)
+            gt_discrete = np.fliplr(gt_discrete)
+            gt_discrete1 = np.fliplr(gt_discrete1)
+            if len(keypoints) > 0:
+                keypoints[:, 0] = (w - 1) - keypoints[:, 0]
+            if len(keypoints1) > 0:
+                keypoints1[:, 0] = (w - 1) - keypoints1[:, 0]
         gt_discrete = np.expand_dims(gt_discrete, 0)
 
         # add
-        if len(keypoints1) > 0:
-            if random.random() > 0.5:
-                img = F.hflip(img)
-                gt_discrete1 = np.fliplr(gt_discrete1)
-                keypoints1[:, 0] = w - keypoints1[:, 0]
-        else:
-            if random.random() > 0.5:
-                img = F.hflip(img)
-                gt_discrete1 = np.fliplr(gt_discrete1)
         gt_discrete1 = np.expand_dims(gt_discrete1, 0)
 
 
