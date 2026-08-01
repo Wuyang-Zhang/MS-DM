@@ -17,7 +17,7 @@ from models import vgg19
 
 SPECIES = {
     "wf": {"label": "whitefly", "class_id": 1, "color": (0, 0, 255)},
-    "ff": {"label": "fruit-fly", "class_id": 2, "color": (255, 0, 0)},
+    "ff": {"label": "fruit-fly", "class_id": 2, "color": (0, 255, 255)},
 }
 
 
@@ -46,6 +46,22 @@ def parse_args():
     parser.add_argument(
         "--mode", choices=("count", "points", "both"), default="both",
         help="count only, point localization only, or both",
+    )
+    parser.add_argument(
+        "--inference-mode", choices=("full", "tiled"), default="full",
+        help="predict the full image or stitch overlapping tiles",
+    )
+    parser.add_argument(
+        "--tile-size", type=int, default=512,
+        help="square tile size used by tiled inference",
+    )
+    parser.add_argument(
+        "--tile-overlap", type=int, default=64,
+        help="overlap in pixels between neighboring tiles",
+    )
+    parser.add_argument(
+        "--tile-batch-size", type=int, default=1,
+        help="number of tiles predicted in one model call",
     )
     parser.add_argument(
         "--device", default="cuda",
@@ -142,6 +158,86 @@ def apply_density_overlay(
     return result
 
 
+def tile_starts(length, tile_size, overlap):
+    """Return tile origins that cover an axis and align the final tile."""
+    if length <= tile_size:
+        return [0]
+    stride = tile_size - overlap
+    starts = list(range(0, length - tile_size + 1, stride))
+    final_start = length - tile_size
+    if starts[-1] != final_start:
+        starts.append(final_start)
+    return starts
+
+
+def predict_full_image(model, inputs, device):
+    """Predict both density maps with one full-image model call."""
+    with torch.no_grad():
+        wf_density, _, ff_density, _ = model(
+            inputs.to(device, non_blocking=True))
+    return wf_density[0, 0].cpu().numpy(), ff_density[0, 0].cpu().numpy(), 1
+
+
+def predict_tiled_image(
+        model, inputs, device, tile_size, overlap, tile_batch_size,
+        downsample_ratio=8):
+    """Predict overlapping tiles and average them in density-map space."""
+    _, _, image_height, image_width = inputs.shape
+    if image_height % downsample_ratio or image_width % downsample_ratio:
+        raise ValueError(
+            "tiled inference requires image dimensions divisible by {}: {}x{}".format(
+                downsample_ratio, image_width, image_height))
+    if tile_size <= 0 or tile_size % downsample_ratio:
+        raise ValueError(
+            "--tile-size must be positive and divisible by {}".format(
+                downsample_ratio))
+    if overlap < 0 or overlap >= tile_size or overlap % downsample_ratio:
+        raise ValueError(
+            "--tile-overlap must be non-negative, smaller than tile size, "
+            "and divisible by {}".format(downsample_ratio))
+    if tile_batch_size <= 0:
+        raise ValueError("--tile-batch-size must be positive")
+
+    effective_height = min(tile_size, image_height)
+    effective_width = min(tile_size, image_width)
+    y_starts = tile_starts(image_height, effective_height, overlap)
+    x_starts = tile_starts(image_width, effective_width, overlap)
+    coordinates = [(y, x) for y in y_starts for x in x_starts]
+
+    density_height = image_height // downsample_ratio
+    density_width = image_width // downsample_ratio
+    wf_sum = np.zeros((density_height, density_width), dtype=np.float32)
+    ff_sum = np.zeros_like(wf_sum)
+    weights = np.zeros_like(wf_sum)
+
+    for offset in range(0, len(coordinates), tile_batch_size):
+        batch_coordinates = coordinates[offset:offset + tile_batch_size]
+        tiles = torch.cat([
+            inputs[:, :, y:y + effective_height, x:x + effective_width]
+            for y, x in batch_coordinates
+        ], dim=0).to(device, non_blocking=True)
+        with torch.no_grad():
+            wf_batch, _, ff_batch, _ = model(tiles)
+        wf_batch = wf_batch[:, 0].cpu().numpy()
+        ff_batch = ff_batch[:, 0].cpu().numpy()
+
+        for tile_index, (y, x) in enumerate(batch_coordinates):
+            density_y = y // downsample_ratio
+            density_x = x // downsample_ratio
+            tile_height, tile_width = wf_batch[tile_index].shape
+            region = (
+                slice(density_y, density_y + tile_height),
+                slice(density_x, density_x + tile_width),
+            )
+            wf_sum[region] += wf_batch[tile_index]
+            ff_sum[region] += ff_batch[tile_index]
+            weights[region] += 1.0
+
+    if np.any(weights == 0):
+        raise RuntimeError("tiled inference left uncovered density pixels")
+    return wf_sum / weights, ff_sum / weights, len(coordinates)
+
+
 def save_positions(path, class_id, boxes):
     with open(path, "w", encoding="utf-8") as stream:
         for x1, y1, x2, y2 in boxes:
@@ -183,6 +279,13 @@ def main():
         os.path.abspath(args.fruit_fly_data_path)), flush=True)
     print("[CONFIG] output: {}".format(os.path.abspath(args.output_dir)), flush=True)
     print("[CONFIG] mode: {}; device: {}".format(args.mode, device), flush=True)
+    print("[CONFIG] inference: {}".format(args.inference_mode), flush=True)
+    if args.inference_mode == "tiled":
+        print(
+            "[CONFIG] tiles: size={}, overlap={}, batch-size={}".format(
+                args.tile_size, args.tile_overlap, args.tile_batch_size),
+            flush=True,
+        )
     print("[CONFIG] boxes: {}".format(
         "enabled" if args.show_boxes else "disabled"), flush=True)
 
@@ -215,21 +318,30 @@ def main():
                 raise RuntimeError("OpenCV could not read {}".format(source_path))
 
             started = time.time()
-            with torch.no_grad():
-                wf_density, _, ff_density, _ = model(inputs.to(device, non_blocking=True))
+            if args.inference_mode == "tiled":
+                wf_array, ff_array, tile_count = predict_tiled_image(
+                    model,
+                    inputs,
+                    device,
+                    args.tile_size,
+                    args.tile_overlap,
+                    args.tile_batch_size,
+                )
+            else:
+                wf_array, ff_array, tile_count = predict_full_image(
+                    model, inputs, device)
             elapsed = time.time() - started
 
-            wf_array = wf_density[0, 0].detach().cpu().numpy()
-            ff_array = ff_density[0, 0].detach().cpu().numpy()
             wf_count = float(wf_array.sum())
             ff_count = float(ff_array.sum())
             wf_actual = float(wf_truth[0])
             ff_actual = float(ff_truth[0])
 
             print(
-                "[PREDICT] {}/{} {}/{} {} | WF {:.2f}/{:.0f} | FF {:.2f}/{:.0f} | {:.2f}s".format(
+                "[PREDICT] {}/{} {}/{} {} | WF {:.2f}/{:.0f} | FF {:.2f}/{:.0f} | "
+                "tiles {} | {:.2f}s".format(
                     subset_name, name, index, len(loader), name,
-                    wf_count, wf_actual, ff_count, ff_actual, elapsed,
+                    wf_count, wf_actual, ff_count, ff_actual, tile_count, elapsed,
                 ),
                 flush=True,
             )
@@ -301,11 +413,14 @@ def main():
                 "fruit_fly_predicted": ff_count,
                 "fruit_fly_points": len(ff_boxes),
                 "inference_seconds": elapsed,
+                "inference_mode": args.inference_mode,
+                "tile_count": tile_count,
             })
 
     fieldnames = [
         "subset", "image", "whitefly_actual", "whitefly_predicted", "whitefly_points",
-        "fruit_fly_actual", "fruit_fly_predicted", "fruit_fly_points", "inference_seconds",
+        "fruit_fly_actual", "fruit_fly_predicted", "fruit_fly_points",
+        "inference_seconds", "inference_mode", "tile_count",
     ]
     with open(summary_path, "w", newline="", encoding="utf-8-sig") as stream:
         writer = csv.DictWriter(stream, fieldnames=fieldnames)

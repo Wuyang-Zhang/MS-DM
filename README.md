@@ -18,7 +18,8 @@ MS-DM/
 |-- pretrained_models/            # Downloaded pretrained weights
 |-- train.py                      # Training entry point
 |-- train_helper.py               # Training and validation routines
-`-- test.py                       # Unified testing and prediction entry point
+|-- test.py                       # Evaluation on the labeled test split
+`-- predict.py                    # Prediction on unlabeled images
 ```
 
 `models/msdm.py` contains the final MS-DM model used by the training and testing scripts. `models/dm_count.py` retains the baseline DM-Count-style model for comparison.
@@ -116,9 +117,11 @@ output/
 
 Training progress is printed for every configured log interval. MS-DM computes an Optimal Transport loss for both species, with 100 Sinkhorn iterations by default, so a training batch can take considerable time.
 
-## Unified Testing and Prediction Entry Point
+## Testing on the Labeled Dataset
 
-`test.py` is the single entry point for evaluation and prediction. It can produce counts, density maps, point locations, combined annotated images, and a CSV summary.
+`test.py` evaluates the labeled `data/whitefly/test` and `data/fruit_fly/test`
+splits. It produces predicted and actual counts, density maps, point locations,
+combined annotated images, and a CSV summary.
 
 ```powershell
 python test.py `
@@ -185,20 +188,87 @@ python test.py `
   --show-boxes
 ```
 
-## Image Size and Tiling
+## Prediction on Unlabeled Images
 
-Test images may be as large as `1440 x 1920` pixels. The current prediction pipeline sends each complete image through the network, so large images require more GPU memory and processing time than the `512 x 512` training crops.
+`predict.py` accepts an ordinary image or a directory of images. It does not
+require `.npy` annotations or the dataset directory structure.
 
-Tile stitching is applied only when file names end with a two-digit row and column index, for example:
+Predict one image with full-image inference:
 
-```text
-image_00.jpg
-image_01.jpg
-image_10.jpg
-image_11.jpg
+```powershell
+python predict.py `
+  --input-path path\to\image.jpg `
+  --inference-mode full
 ```
 
-Regular file names such as `0001.jpg` are treated as independent images and are not interpreted as tiles.
+Predict every supported image below a directory with tiled inference:
+
+```powershell
+python predict.py `
+  --input-path path\to\images `
+  --inference-mode tiled `
+  --tile-size 512 `
+  --tile-overlap 64 `
+  --tile-batch-size 1
+```
+
+Prediction boxes are disabled by default. Add `--show-boxes` when connected-
+component bounding boxes are desired:
+
+```powershell
+python predict.py --input-path path\to\images --show-boxes
+```
+
+The default output directory is `output/predict/`:
+
+```text
+output/predict/
+|-- density/whitefly/
+|-- density/fruit-fly/
+|-- positions/whitefly/
+|-- positions/fruit-fly/
+|-- visualizations/
+`-- summary.csv
+```
+
+`summary.csv` records both predicted counts, connected-region counts, inference
+mode, tile count, and inference time for every image.
+
+## Image Size and Tiling
+
+Test images may be as large as `1440 x 1920` pixels. Two inference modes are
+available.
+
+Full-image inference is the default:
+
+```powershell
+python test.py --inference-mode full
+```
+
+Tiled inference divides each image in memory, predicts every tile, and stitches
+the density maps back together:
+
+```powershell
+python test.py `
+  --inference-mode tiled `
+  --tile-size 512 `
+  --tile-overlap 64 `
+  --tile-batch-size 1
+```
+
+- `--tile-size` sets the square tile size and must be divisible by `8`.
+- `--tile-overlap` controls overlap between adjacent tiles, must be divisible by
+  `8`, and must be smaller than the tile size.
+- `--tile-batch-size` controls how many tiles are sent to the model together.
+  Increase it for speed only when sufficient GPU memory is available.
+- Overlapping density predictions are averaged in the stitched output.
+- The final tile on each axis is aligned with the image boundary, so the full
+  image is covered without saving temporary tile files.
+
+Tiled inference is useful when full images require too much GPU memory or when
+an input scale closer to the `512 x 512` training crops is preferred. Counts,
+density maps, point files, CSV summaries, and combined visualizations remain
+full-image outputs in both modes.
 
 ## Citation
 
