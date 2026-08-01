@@ -22,10 +22,29 @@ MS-DM 是论文 **A multi-species pest recognition and counting method based on 
 最终模型入口为：
 
 ```text
-models/models_aspp_cmba_conv_ff_fusion.py
+models/msdm.py
 ```
 
 `from models import vgg19` 默认导入该最终结构。
+
+模型文件命名：
+
+```text
+models/dm_count.py   # 原始 DM-Count 风格的双分支基础模型
+models/msdm.py       # 论文最终 MS-DM：FPN + 双分支 + ConF
+```
+
+训练和预测统一使用：
+
+```python
+from models import vgg19  # 实际来自 models.msdm
+```
+
+如果需要单独进行基础模型消融实验，可以显式导入：
+
+```python
+from models.dm_count import vgg19
+```
 
 ## 项目结构
 
@@ -37,7 +56,7 @@ MS-DM/
 ├── models/                       # MS-DM 网络结构
 ├── tools/                        # 数据预处理工具
 ├── pretrained_models/            # 预训练权重（默认被 Git 忽略）
-├── ckpts/                        # 训练检查点和日志（默认被 Git 忽略）
+├── output/                       # 所有运行产物（默认被 Git 忽略）
 ├── train.py                      # 训练入口
 ├── train_helper.py               # 训练与验证流程
 └── test.py                        # 统一的计数、密度图与位置预测入口
@@ -127,7 +146,7 @@ data/
 论文最终结构对应的现有最佳权重为：
 
 ```text
-ckpts/input-512_wot-0.1_wtv-0.01_reg-10.0_nIter-100_normCood-0-v3 fusion/best_model_16.pth
+output/ckpts/input-512_wot-0.1_wtv-0.01_reg-10.0_nIter-100_normCood-0-v3 fusion/best_model_16.pth
 ```
 
 该权重与最终网络的 92 个参数项完全匹配。由于原文件使用新版 PyTorch ZIP 格式，PyTorch 1.2 无法直接读取，因此本项目在本机生成了兼容版本：
@@ -160,11 +179,20 @@ python train.py `
 
 训练输出：
 
-- 检查点与训练日志：`ckpts/`
-- TensorBoard：`runs/`
-- 运行指标：`log/run_log.txt`
+- 检查点与训练日志：`output/ckpts/`
+- TensorBoard：`output/runs/`
+- 运行指标：`output/log/run_log.txt`
+- 临时文件：`output/tmp/`
 
-程序会自动创建 `ckpts`、`runs` 和 `log` 目录。
+程序会自动创建完整的输出目录：
+
+```text
+output/
+├── ckpts/
+├── log/
+├── runs/
+└── tmp/
+```
 
 训练会逐 batch 输出：
 
@@ -204,7 +232,7 @@ python test.py
 
 ```text
 输入：test_images-pre-result-full/data-used-by-train-val-test
-统一输出：test_images-pre-result-full/result
+统一输出：output/test
 权重：pretrained_models/msdm_final_v3_legacy.pth
 ```
 
@@ -214,7 +242,7 @@ python test.py
 python test.py `
   --model-path pretrained_models\msdm_final_v3_legacy.pth `
   --data-path test_images-pre-result-full\data-used-by-train-val-test `
-  --output-dir test_images-pre-result-full\result `
+  --output-dir output\test `
   --mode both `
   --device cuda
 ```
@@ -238,7 +266,7 @@ python test.py --mode both    # 全部输出，默认模式
 统一输出目录结构：
 
 ```text
-result/
+output/test/
 ├── density/whitefly/
 ├── density/fruit-fly/
 ├── positions/whitefly/
@@ -273,7 +301,7 @@ image_11.jpg
 
 ## 常见问题
 
-### `FileNotFoundError: ./log/run_log.txt`
+### `FileNotFoundError: output/log/run_log.txt`
 
 已修复。训练初始化时会自动创建 `log` 和 `runs`。
 

@@ -48,15 +48,16 @@ class Trainer(object):
 
     def setup(self):
         args = self.args
-        os.makedirs(args.output_dir, exist_ok=True)
-        os.makedirs(args.tensorboard_dir, exist_ok=True)
+        for directory in (
+                args.output_root, args.checkpoint_dir, args.log_dir,
+                args.tensorboard_dir, args.tmp_dir):
+            os.makedirs(directory, exist_ok=True)
 
         sub_dir = 'input-{}_wot-{}_wtv-{}_reg-{}_nIter-{}_normCood-{}'.format(
             args.crop_size, args.wot, args.wtv, args.reg, args.num_of_iter_in_ot, args.norm_cood)
 
-        self.save_dir = os.path.join('ckpts', sub_dir)
-        if not os.path.exists(self.save_dir):
-            os.makedirs(self.save_dir)
+        self.save_dir = os.path.join(args.checkpoint_dir, sub_dir)
+        os.makedirs(self.save_dir, exist_ok=True)
 
         time_str = datetime.strftime(datetime.now(), '%m%d-%H%M%S')
 

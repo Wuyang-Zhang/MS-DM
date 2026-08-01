@@ -1,8 +1,6 @@
-ckpts/
 weights/
 docs/
 pretrained_models/
-tmp/
 data/data-used-by-train-val-test/
 data/data-used-by-train-val-test-another/
 
@@ -26,8 +24,6 @@ env/
 .conda/
 
 # Training logs and generated outputs
-runs/
-log/
 logs/
 events.out.tfevents.*
 wandb/

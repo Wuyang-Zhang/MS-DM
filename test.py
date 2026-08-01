@@ -35,7 +35,7 @@ def parse_args():
     )
     parser.add_argument(
         "--output-dir",
-        default=r"test_images-pre-result-full\result",
+        default=r"output\test",
         help="root directory for all prediction outputs",
     )
     parser.add_argument(

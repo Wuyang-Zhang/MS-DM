@@ -53,9 +53,26 @@ def parse_args():
                         help='sinkhorn iterations')
     parser.add_argument('--norm-cood', type=int, default=0, help='whether to norm cood when computing distance')  # 计算距离是否归一化
     parser.add_argument('--num-time', type=int, default=1, help='ff loss')  # 计算距离是否归一化
-    parser.add_argument('--tensorboard_dir', default='./runs', help='path where to save, empty for no saving')   
-    parser.add_argument('--output_dir', default='./log',help='path where to save, empty for no saving') 
+    parser.add_argument('--output-root', default='output',
+                        help='root directory for all generated training files')
+    parser.add_argument('--checkpoint-dir', default=None,
+                        help='checkpoint directory; defaults to <output-root>/ckpts')
+    parser.add_argument('--log-dir', '--output-dir', '--output_dir', dest='log_dir', default=None,
+                        help='metric log directory; defaults to <output-root>/log')
+    parser.add_argument('--tensorboard-dir', '--tensorboard_dir', dest='tensorboard_dir', default=None,
+                        help='TensorBoard directory; defaults to <output-root>/runs')
+    parser.add_argument('--tmp-dir', default=None,
+                        help='temporary-file directory; defaults to <output-root>/tmp')
     args = parser.parse_args()
+
+    args.output_root = os.path.abspath(args.output_root)
+    args.checkpoint_dir = args.checkpoint_dir or os.path.join(args.output_root, 'ckpts')
+    args.log_dir = args.log_dir or os.path.join(args.output_root, 'log')
+    args.tensorboard_dir = args.tensorboard_dir or os.path.join(args.output_root, 'runs')
+    args.tmp_dir = args.tmp_dir or os.path.join(args.output_root, 'tmp')
+
+    # Backward-compatible attribute used by Trainer.train().
+    args.output_dir = args.log_dir
 
 
     if args.dataset.lower() == 'qnrf':
