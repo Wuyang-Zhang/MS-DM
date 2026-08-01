@@ -168,5 +168,5 @@ def main(input_dataset_path, output_dataset_path, min_size=384, max_size=1920):
 
 if __name__ == '__main__':
     input_dataset_path =  r'data'
-    output_dataset_path =  r'data\data-used-by-train-val-test' # 存放白粉虱的文件夹
+    output_dataset_path =  r'data\whitefly' # 存放白粉虱的文件夹
     main(input_dataset_path, output_dataset_path, min_size=384, max_size=1920)

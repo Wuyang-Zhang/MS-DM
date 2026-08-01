@@ -1,285 +1,195 @@
 # MS-DM
 
-MS-DM 是论文 **A multi-species pest recognition and counting method based on a density map in the greenhouse** 的 PyTorch 实现，用于对白粉虱（whitefly）和果蝇（fruit fly）进行双物种计数与位置可视化。
+PyTorch implementation of **A Multi-Species Pest Recognition and Counting Method Based on a Density Map in the Greenhouse**, published in *Computers and Electronics in Agriculture* (2024).
 
-- 论文：*Computers and Electronics in Agriculture*, 217 (2024), 108554
-- DOI：[10.1016/j.compag.2023.108554](https://doi.org/10.1016/j.compag.2023.108554)
-- 基础方法：[DM-Count, NeurIPS 2020](https://proceedings.neurips.cc/paper/2020/hash/118bd558033a1016fcc82560c65cca5f-Abstract.html)
-- 移动端项目：[MS_DM_Android](https://github.com/Wuyang-Zhang/MS_DM_Android)
+- Paper: [https://doi.org/10.1016/j.compag.2023.108554](https://doi.org/10.1016/j.compag.2023.108554)
+- Android application: [MS_DM_Android](https://github.com/Wuyang-Zhang/MS_DM_Android)
 
-## 方法概览
-
-本项目以 DM-Count 的分布匹配计数框架为基础，主要扩展包括：
-
-- 使用两套点标注和两个回归分支，分别预测白粉虱与果蝇密度图；
-- 使用 VGG19 作为共享特征提取骨干；
-- 使用 FPN 融合高层语义信息与低层细节；
-- 在果蝇分支加入由 ASPP 和 CBAM 组成的 Context-and-Focus（ConF）模块；
-- 使用计数损失、Optimal Transport（OT）损失和 Total Variation（TV）损失训练；
-- 支持将预测密度图转换为原图上的位置结果；
-- 使用自适应样本均衡方法缓解两个物种的数量不平衡。
-
-最终模型入口为：
-
-```text
-models/msdm.py
-```
-
-`from models import vgg19` 默认导入该最终结构。
-
-模型文件命名：
-
-```text
-models/dm_count.py   # 原始 DM-Count 风格的双分支基础模型
-models/msdm.py       # 论文最终 MS-DM：FPN + 双分支 + ConF
-```
-
-训练和预测统一使用：
-
-```python
-from models import vgg19  # 实际来自 models.msdm
-```
-
-如果需要单独进行基础模型消融实验，可以显式导入：
-
-```python
-from models.dm_count import vgg19
-```
-
-## 项目结构
+## Project Structure
 
 ```text
 MS-DM/
-├── data/                         # 训练与验证数据
-├── datasets/                     # 数据集读取和数据增强
-├── losses/                       # OT、Sinkhorn 等损失实现
-├── models/                       # MS-DM 网络结构
-├── tools/                        # 数据预处理工具
-├── pretrained_models/            # 预训练权重（默认被 Git 忽略）
-├── output/                       # 所有运行产物（默认被 Git 忽略）
-├── train.py                      # 训练入口
-├── train_helper.py               # 训练与验证流程
-└── test.py                        # 统一的计数、密度图与位置预测入口
+|-- data/                         # Training and validation datasets
+|-- datasets/                     # Dataset loaders and augmentation
+|-- losses/                       # OT, Sinkhorn, and related losses
+|-- models/                       # DM-Count and MS-DM model definitions
+|-- tools/                        # Data preprocessing utilities and legacy pipeline
+|-- output/                       # Generated checkpoints, logs, and predictions
+|-- pretrained_models/            # Downloaded pretrained weights
+|-- train.py                      # Training entry point
+|-- train_helper.py               # Training and validation routines
+`-- test.py                       # Unified testing and prediction entry point
 ```
 
-## 环境
+`models/msdm.py` contains the final MS-DM model used by the training and testing scripts. `models/dm_count.py` retains the baseline DM-Count-style model for comparison.
 
-### 原始复现环境
+## Dataset Layout
 
-论文代码的原始依赖为：
+See [`data/readme.md`](data/readme.md) for a file-by-file guide, normal usage,
+and the historical dataset-preparation order.
 
-- Python 3.7
-- PyTorch 1.2.0
-- TorchVision 0.4.0
-- CUDA 10.0
-
-本机已有 Conda 环境：
-
-```powershell
-conda activate msdm
-```
-
-该环境适合检查旧代码和权重兼容性。但 PyTorch 1.2/CUDA 10 对 RTX 40 系列显卡支持较差，在 RTX 4060 上训练和推理可能异常缓慢。
-
-### RTX 40 系列建议环境
-
-实际推理建议使用支持当前显卡架构的较新环境，例如：
-
-- PyTorch 2.x
-- CUDA 12.x
-- TorchVision 与 PyTorch 对应版本
-
-本机已验证 `bisenet` 环境中的 PyTorch 2.4.1 + CUDA 12.4 可以运行两个测试脚本：
-
-```powershell
-conda activate bisenet
-```
-
-这是本机现有环境名称，并非项目强制要求。其他机器建议单独创建现代 PyTorch 环境。
-
-现代环境安装依赖：
-
-```powershell
-pip install -r requirements.txt
-```
-
-复现 Python 3.7/PyTorch 1.2 环境时使用：
-
-```powershell
-pip install -r requirements-legacy.txt
-```
-
-## 数据目录
-
-两个物种使用并行目录，文件名必须对应：
+The annotations for the two species are stored in parallel directory trees. Corresponding images and annotation files must have the same file names in both trees.
 
 ```text
 data/
-├── data-used-by-train-val-test/
-│   ├── train/
-│   ├── val/
-│   └── test/
-└── data-used-by-train-val-test-another/
-    ├── train/
-    ├── val/
-    └── test/
+|-- whitefly/
+|   |-- train/
+|   |-- val/
+|   `-- test/
+`-- fruit_fly/
+    |-- train/
+    |-- val/
+    `-- test/
 ```
 
-每张图片使用同名 `.npy` 保存点坐标：
+Each image must have a matching NumPy annotation file containing point coordinates in `(x, y)` order:
 
 ```text
 0001.jpg
 0001.npy
 ```
 
-当前代码约定：
+- `whitefly` contains images and annotations for the whitefly counting branch.
+- `fruit_fly` contains images and annotations for the fruit-fly counting branch.
+- The default training crop size is `512 x 512` pixels.
+- The predicted density maps have one eighth of the input image width and height.
 
-- `data-used-by-train-val-test`：第一个计数分支的标注；
-- `data-used-by-train-val-test-another`：第二个计数分支的标注；
-- 点坐标格式为 `(x, y)`；
-- 训练裁剪尺寸默认为 512，输出密度图为输入的 1/8 尺度。
+Preprocessing utilities are available under `data/` and `tools/preprocess/`. The original test-data preparation scripts and their documentation are preserved in [`tools/preprocess/legacy_test_pipeline`](tools/preprocess/legacy_test_pipeline/README.md). Check their path arguments before running them because historical paths may not match your machine.
 
-常用预处理脚本位于 `data/` 和 `tools/preprocess/`。运行前应根据实际路径检查脚本参数，不建议直接依赖脚本中的历史绝对路径。
+High-resolution test sources and their original point annotations are preserved locally under `data/raw_test/`. This directory is ignored by Git because it contains large dataset files.
 
-## 权重
+## Pretrained Weights
 
-论文最终结构对应的现有最佳权重为：
+Pretrained weights will be provided on the [GitHub Releases page](https://github.com/Wuyang-Zhang/MS-DM/releases).
 
-```text
-output/ckpts/input-512_wot-0.1_wtv-0.01_reg-10.0_nIter-100_normCood-0-v3 fusion/best_model_16.pth
+## Environment
+
+The original reproduction environment used:
+
+- Python 3.7
+- PyTorch 1.2.0
+- TorchVision 0.4.0
+- CUDA 10.0
+
+To reproduce the legacy environment:
+
+```powershell
+conda activate msdm
 ```
 
-该权重与最终网络的 92 个参数项完全匹配。由于原文件使用新版 PyTorch ZIP 格式，PyTorch 1.2 无法直接读取，因此本项目在本机生成了兼容版本：
+For current NVIDIA GPUs, use a recent PyTorch/CUDA environment. Install a compatible CUDA-enabled PyTorch build first, then install the project dependencies:
 
-```text
-pretrained_models/msdm_final_v3_legacy.pth
+```powershell
+pip install -r requirements.txt
 ```
 
-转换文件不会覆盖原权重。`train.py` 和两个测试脚本默认使用该兼容权重。
+## Training
 
-## 训练
-
-激活环境后运行：
+Start training with the default configuration:
 
 ```powershell
 conda activate msdm
 python train.py
 ```
 
-常用参数：
+Example with explicit arguments:
 
 ```powershell
 python train.py `
-  --data-dir data\data-used-by-train-val-test `
+  --whitefly-data-dir data\whitefly `
+  --fruit-fly-data-dir data\fruit_fly `
   --batch-size 10 `
   --max-epoch 200 `
   --log-interval 1 `
   --device 0
 ```
 
-训练输出：
-
-- 检查点与训练日志：`output/ckpts/`
-- TensorBoard：`output/runs/`
-- 运行指标：`output/log/run_log.txt`
-- 临时文件：`output/tmp/`
-
-程序会自动创建完整的输出目录：
+The program automatically creates the runtime directories:
 
 ```text
 output/
-├── ckpts/
-├── log/
-├── runs/
-└── tmp/
+|-- ckpts/                        # Model checkpoints
+|-- log/                          # Training metrics and run logs
+|-- runs/                         # TensorBoard event files
+`-- tmp/                          # Temporary files
 ```
 
-训练会逐 batch 输出：
+Training progress is printed for every configured log interval. MS-DM computes an Optimal Transport loss for both species, with 100 Sinkhorn iterations by default, so a training batch can take considerable time.
 
-```text
-Epoch 0 Batch 3/16 (18.8%), Loss: ..., WF: ..., FF: ...,
-45.2s/batch, ETA: ..., GPU memory: ... GB
-```
+## Unified Testing and Prediction Entry Point
 
-### 为什么训练很慢
-
-每个 batch 会对两个物种分别计算 OT 损失，默认每次执行 100 轮 Sinkhorn 迭代：
-
-```text
---num-of-iter-in-ot 100
-```
-
-因此 MS-DM 本身计算量较大。若 GPU 利用率持续接近 100%，通常表示仍在计算而不是卡死。调试时可以临时降低 OT 迭代次数或 batch size，但这会改变训练设置和结果。
-
-## 统一测试与预测入口
-
-建议在支持 RTX 4060 的现代 PyTorch 环境中运行：
-
-```powershell
-conda activate bisenet
-python test.py
-```
-
-`test.py` 默认一次完成：
-
-- 白粉虱和果蝇计数；
-- 两类密度图保存；
-- 两类位置文本保存；
-- 带预测框的可视化图片；
-- 每张图片的 `summary.csv` 汇总。
-
-默认路径：
-
-```text
-输入：test_images-pre-result-full/data-used-by-train-val-test
-统一输出：output/test
-权重：pretrained_models/msdm_final_v3_legacy.pth
-```
-
-显式指定参数：
+`test.py` is the single entry point for evaluation and prediction. It can produce counts, density maps, point locations, combined annotated images, and a CSV summary.
 
 ```powershell
 python test.py `
-  --model-path pretrained_models\msdm_final_v3_legacy.pth `
-  --data-path test_images-pre-result-full\data-used-by-train-val-test `
+  --model-path path\to\model.pth `
+  --data-path data\whitefly `
+  --fruit-fly-data-path data\fruit_fly `
   --output-dir output\test `
   --mode both `
   --device cuda
 ```
 
-快速验证时可限制每个子集的图片数量：
+Available modes:
 
 ```powershell
-python test.py --subsets test --max-images 1
+python test.py --mode count    # Counts and density maps
+python test.py --mode points   # Point locations, visualizations, and density maps
+python test.py --mode both     # All outputs (default)
 ```
 
-`--max-images 0` 表示处理全部图片。
-
-运行模式：
+For a quick check, limit the number of images processed in each subset:
 
 ```powershell
-python test.py --mode count   # 计数和密度图
-python test.py --mode points  # 位置、可视化和密度图
-python test.py --mode both    # 全部输出，默认模式
+python test.py --max-images 1
 ```
 
-统一输出目录结构：
+Only the `test` subset is processed; `train` and `val` are never used by `test.py`. Use `--max-images 0` to process all test images. Prediction results are saved as:
 
 ```text
 output/test/
-├── density/whitefly/
-├── density/fruit-fly/
-├── positions/whitefly/
-├── positions/fruit-fly/
-├── visualizations/
-└── summary.csv
+|-- density/whitefly/
+|-- density/fruit-fly/
+|-- positions/whitefly/
+|-- positions/fruit-fly/
+|-- visualizations/
+`-- summary.csv
 ```
 
-## 图片尺寸与拼图
+Each image in `visualizations/` combines both species on the original image.
+Whitefly density regions are red and fruit-fly density regions are yellow. Only
+density values above `--threshold` are blended. Bounding boxes are disabled by
+default because a large connected region can produce an oversized rectangle.
 
-现有测试图片可能达到 1440×1920。脚本当前会将整张图片送入网络，因此全量测试的显存占用和运行时间明显高于 512×512 的训练裁剪。
+Generate the combined density visualization without boxes (default):
 
-拼图逻辑仅对文件名末尾包含两位行列编号的切片执行，例如：
+```powershell
+python test.py --mode both
+```
+
+Optionally draw bounding boxes:
+
+```powershell
+python test.py --mode both --show-boxes
+```
+
+When enabled, every box is the minimum axis-aligned rectangle enclosing a
+connected density region, not a fixed-size box. Threshold and overlay opacity
+can also be adjusted:
+
+```powershell
+python test.py `
+  --mode both `
+  --threshold 10 `
+  --overlay-alpha 0.45 `
+  --show-boxes
+```
+
+## Image Size and Tiling
+
+Test images may be as large as `1440 x 1920` pixels. The current prediction pipeline sends each complete image through the network, so large images require more GPU memory and processing time than the `512 x 512` training crops.
+
+Tile stitching is applied only when file names end with a two-digit row and column index, for example:
 
 ```text
 image_00.jpg
@@ -288,52 +198,11 @@ image_10.jpg
 image_11.jpg
 ```
 
-普通文件名（如 `0001.jpg`）不会再被错误地当作切片坐标。
+Regular file names such as `0001.jpg` are treated as independent images and are not interpreted as tiles.
 
-## 已验证状态
+## Citation
 
-- 最终 MS-DM 网络可导入；
-- 兼容权重可严格加载，所有参数匹配；
-- 双分支前向计算成功；
-- 离散密度图保持计数守恒；
-- 统一入口 `test.py` 已完成计数、密度图、位置文本、可视化和 CSV 的单图端到端验证；
-- 全部 44 张大图尚未完成一次连续全量测试。
-
-## 常见问题
-
-### `FileNotFoundError: output/log/run_log.txt`
-
-已修复。训练初始化时会自动创建 `log` 和 `runs`。
-
-### `RuntimeError: ... is a zip archive`
-
-PyTorch 1.2 无法读取新版 ZIP 权重。使用：
-
-```text
-pretrained_models/msdm_final_v3_legacy.pth
-```
-
-### `ModuleNotFoundError: No module named 'cv2'`
-
-安装 OpenCV：
-
-```powershell
-pip install opencv-python
-```
-
-### RTX 4060 上长时间没有输出
-
-先运行 `nvidia-smi` 检查 GPU。如果使用 PyTorch 1.2/CUDA 10，建议切换到支持 Ada 架构的 PyTorch 2.x/CUDA 12.x 环境。
-
-### `PILLOW_VERSION` 导入错误
-
-这是 TorchVision 0.4 与新版 Pillow 的兼容问题。仅在复现旧环境时使用兼容版本：
-
-```powershell
-pip install pillow==6.2.2
-```
-
-## 引用
+If you use this project, please cite the MS-DM paper:
 
 ```bibtex
 @article{zhang2024msdm,
@@ -348,7 +217,7 @@ pip install pillow==6.2.2
 }
 ```
 
-DM-Count：
+MS-DM builds on the distribution-matching framework introduced by DM-Count:
 
 ```bibtex
 @inproceedings{wang2020dmcount,
@@ -360,12 +229,6 @@ DM-Count：
 }
 ```
 
-参考文献格式：
-
-> Zhang, Z., Rong, J., Qi, Z., Yang, Y., Zheng, X., Gao, J., Li, W., & Yuan, T. (2024). A multi-species pest recognition and counting method based on a density map in the greenhouse. *Computers and Electronics in Agriculture, 217*, 108554. https://doi.org/10.1016/j.compag.2023.108554
-
-> Wang, B., Liu, H., Samaras, D., & Nguyen, M. H. (2020). Distribution Matching for Crowd Counting. In *Advances in Neural Information Processing Systems* (Vol. 33).
-
 ## License
 
-见 [LICENSE](LICENSE)。
+See [LICENSE](LICENSE) for license information.

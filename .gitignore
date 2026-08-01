@@ -1,8 +1,9 @@
 weights/
 docs/
 pretrained_models/
-data/data-used-by-train-val-test/
-data/data-used-by-train-val-test-another/
+data/whitefly/
+data/fruit_fly/
+data/raw_test/
 
 test_images-pre-result-full/
 

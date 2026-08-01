@@ -140,10 +140,11 @@ class Base(data.Dataset):
 
 
 class Crowd_qnrf(Base):
-    def __init__(self, root_path, crop_size,
+    def __init__(self, root_path, secondary_root_path, crop_size,
                  downsample_ratio=8,
                  method='train'):
         super().__init__(root_path, crop_size, downsample_ratio)
+        self.secondary_root_path = secondary_root_path
         self.method = method
 
         self.im_list = sorted(glob(os.path.join(self.root_path, '*.jpg')))
@@ -160,7 +161,11 @@ class Crowd_qnrf(Base):
 
         # print('读取图片路径为，', img_path)
 
-        gd_path = img_path.replace('jpg', 'npy')
+        gd_path = os.path.splitext(img_path)[0] + '.npy'
+        secondary_gd_path = os.path.join(
+            self.secondary_root_path,
+            os.path.basename(gd_path),
+        )
 
 
         img = Image.open(img_path).convert('RGB')
@@ -169,7 +174,7 @@ class Crowd_qnrf(Base):
 
             keypoints = np.load(gd_path)
             # 增加第二个关键点
-            keypoints1 = np.load(img_path.replace('data-used-by-train-val-test','data-used-by-train-val-test-another').replace('jpg', 'npy'))
+            keypoints1 = np.load(secondary_gd_path)
             # 增加第二个关键点返回值
             return self.train_transform(img, keypoints, keypoints1)  
         
@@ -178,17 +183,17 @@ class Crowd_qnrf(Base):
             img = self.trans(img)
             name = os.path.basename(img_path).split('.')[0]
 
-            if os.path.exists(img_path.replace('data-used-by-train-val-test','data-used-by-train-val-test-another').replace('jpg', 'npy')) and not os.path.exists(gd_path):
-                keypoints1 = np.load(img_path.replace('data-used-by-train-val-test','data-used-by-train-val-test-another').replace('jpg', 'npy'))
+            if os.path.exists(secondary_gd_path) and not os.path.exists(gd_path):
+                keypoints1 = np.load(secondary_gd_path)
                 return img, 0, len(keypoints1),name  
             
-            elif not os.path.exists(img_path.replace('data-used-by-train-val-test','data-used-by-train-val-test-another').replace('jpg', 'npy')) and os.path.exists(gd_path):  
+            elif not os.path.exists(secondary_gd_path) and os.path.exists(gd_path):
                 keypoints = np.load(gd_path)
                 return img,len(keypoints), 0,name 
             
-            elif os.path.exists(img_path.replace('data-used-by-train-val-test','data-used-by-train-val-test-another').replace('jpg', 'npy')) and os.path.exists(gd_path):  
+            elif os.path.exists(secondary_gd_path) and os.path.exists(gd_path):
                 keypoints = np.load(gd_path)
-                keypoints1 = np.load(img_path.replace('data-used-by-train-val-test','data-used-by-train-val-test-another').replace('jpg', 'npy'))
+                keypoints1 = np.load(secondary_gd_path)
                 return img,len(keypoints), len(keypoints1),name 
             
             else:

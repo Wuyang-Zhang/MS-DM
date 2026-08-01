@@ -80,9 +80,18 @@ class Trainer(object):
         #------------------------------------------------------------------------------------------------
         if args.dataset.lower() == 'qnrf':
 
-            print( '数据集1的路径是 ：' ,(os.path.join(args.data_dir, 'train')   ))
-            self.datasets = {x: Crowd_qnrf(os.path.join(args.data_dir, x),
-                                           args.crop_size, downsample_ratio, x) for x in ['train', 'val']}
+            print('Whitefly dataset:', os.path.join(args.whitefly_data_dir, 'train'))
+            print('Fruit-fly dataset:', os.path.join(args.fruit_fly_data_dir, 'train'))
+            self.datasets = {
+                split: Crowd_qnrf(
+                    os.path.join(args.whitefly_data_dir, split),
+                    os.path.join(args.fruit_fly_data_dir, split),
+                    args.crop_size,
+                    downsample_ratio,
+                    split,
+                )
+                for split in ['train', 'val']
+            }
             print( '数据集1 的长度是 : ', len(self.datasets))
 
       

@@ -16,8 +16,8 @@ from models import vgg19
 
 
 SPECIES = {
-    "wf": {"label": "whitefly", "class_id": 1, "half_box": 16, "color": (0, 0, 255)},
-    "ff": {"label": "fruit-fly", "class_id": 2, "half_box": 32, "color": (0, 255, 255)},
+    "wf": {"label": "whitefly", "class_id": 1, "color": (0, 0, 255)},
+    "ff": {"label": "fruit-fly", "class_id": 2, "color": (255, 0, 0)},
 }
 
 
@@ -30,8 +30,13 @@ def parse_args():
     )
     parser.add_argument(
         "--data-path",
-        default=r"test_images-pre-result-full\data-used-by-train-val-test",
-        help="directory containing test/train/val subset directories",
+        default=r"data\whitefly",
+        help="whitefly dataset root containing the test directory",
+    )
+    parser.add_argument(
+        "--fruit-fly-data-path",
+        default=r"data\fruit_fly",
+        help="fruit-fly dataset root containing the test directory",
     )
     parser.add_argument(
         "--output-dir",
@@ -47,16 +52,20 @@ def parse_args():
         help="torch device, for example cuda, cuda:0, or cpu",
     )
     parser.add_argument(
-        "--subsets", nargs="*", default=None,
-        help="subset directories to process; default processes every directory",
-    )
-    parser.add_argument(
         "--max-images", type=int, default=0,
         help="maximum images per subset; 0 processes all images",
     )
     parser.add_argument(
-        "--threshold", type=int, default=10,
+        "--threshold", type=int, default=50,
         help="0-255 density threshold used for point localization",
+    )
+    parser.add_argument(
+        "--overlay-alpha", type=float, default=0.45,
+        help="density heatmap opacity on the source image (0-1)",
+    )
+    parser.add_argument(
+        "--show-boxes", action="store_true",
+        help="draw connected-component bounding boxes; disabled by default",
     )
     parser.add_argument("--num-workers", type=int, default=0)
     return parser.parse_args()
@@ -89,12 +98,14 @@ def normalize_density(density):
     return ((density - minimum) * 255.0 / (maximum - minimum)).astype(np.uint8)
 
 
-def locate_points(density, image_shape, threshold, half_box):
+def locate_points(density, image_shape, threshold):
+    """Return bounding boxes for thresholded density-map components."""
     normalized = normalize_density(density)
     mask = (normalized >= threshold).astype(np.uint8)
-    kernel = np.ones((2, 2), dtype=np.uint8)
+    # An odd-sized kernel keeps component coordinates spatially centered.
+    kernel = np.ones((3, 3), dtype=np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    _, _, _, centroids = cv2.connectedComponentsWithStats(mask, connectivity=4)
+    _, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=4)
 
     image_height, image_width = image_shape[:2]
     density_height, density_width = normalized.shape
@@ -103,16 +114,32 @@ def locate_points(density, image_shape, threshold, half_box):
     boxes = []
 
     # Index 0 is the background component and must not become a prediction.
-    for center_x, center_y in centroids[1:]:
-        x = center_x * scale_x
-        y = center_y * scale_y
+    for component in stats[1:]:
+        x, y, width, height = component[:4]
         boxes.append((
-            max(0, int(round(x - half_box))),
-            max(0, int(round(y - half_box))),
-            min(image_width - 1, int(round(x + half_box))),
-            min(image_height - 1, int(round(y + half_box))),
+            max(0, int(round(x * scale_x))),
+            max(0, int(round(y * scale_y))),
+            min(image_width - 1, int(round((x + width) * scale_x)) - 1),
+            min(image_height - 1, int(round((y + height) * scale_y)) - 1),
         ))
     return boxes, normalized
+
+
+def apply_density_overlay(
+        image, normalized_density, threshold, color, alpha):
+    """Blend one species color over thresholded density-map regions."""
+    image_height, image_width = image.shape[:2]
+    source_mask = (normalized_density >= threshold).astype(np.uint8)
+    resized_mask = cv2.resize(
+        source_mask, (image_width, image_height),
+        interpolation=cv2.INTER_NEAREST,
+    ).astype(bool)
+    color_layer = np.empty_like(image)
+    color_layer[:] = color
+    blended = cv2.addWeighted(image, 1.0 - alpha, color_layer, alpha, 0.0)
+    result = image.copy()
+    result[resized_mask] = blended[resized_mask]
+    return result
 
 
 def save_positions(path, class_id, boxes):
@@ -142,44 +169,45 @@ def ensure_output_dirs(root):
     return directories
 
 
-def selected_subsets(data_path, requested):
-    available = sorted(
-        name for name in os.listdir(data_path)
-        if os.path.isdir(os.path.join(data_path, name))
-    )
-    if requested is None:
-        return available
-    missing = sorted(set(requested) - set(available))
-    if missing:
-        raise FileNotFoundError("subset directories not found: {}".format(", ".join(missing)))
-    return requested
-
-
 def main():
     args = parse_args()
+    if not 0.0 <= args.overlay_alpha <= 1.0:
+        raise ValueError("--overlay-alpha must be between 0 and 1")
     device = resolve_device(args.device)
     output_dirs = ensure_output_dirs(args.output_dir)
     summary_path = os.path.join(args.output_dir, "summary.csv")
 
     print("[CONFIG] model: {}".format(os.path.abspath(args.model_path)), flush=True)
     print("[CONFIG] input: {}".format(os.path.abspath(args.data_path)), flush=True)
+    print("[CONFIG] fruit-fly input: {}".format(
+        os.path.abspath(args.fruit_fly_data_path)), flush=True)
     print("[CONFIG] output: {}".format(os.path.abspath(args.output_dir)), flush=True)
     print("[CONFIG] mode: {}; device: {}".format(args.mode, device), flush=True)
+    print("[CONFIG] boxes: {}".format(
+        "enabled" if args.show_boxes else "disabled"), flush=True)
 
     model = load_model(args.model_path, device)
     rows = []
 
-    for subset_name in selected_subsets(args.data_path, args.subsets):
-        subset_path = os.path.join(args.data_path, subset_name)
-        dataset = Crowd_qnrf(subset_path, 512, 8, method="val")
-        if args.max_images > 0:
-            dataset = Subset(dataset, range(min(args.max_images, len(dataset))))
-        loader = DataLoader(
-            dataset, batch_size=1, shuffle=False,
-            num_workers=args.num_workers, pin_memory=device.type == "cuda",
-        )
+    subset_name = "test"
+    subset_path = os.path.join(args.data_path, subset_name)
+    fruit_fly_subset_path = os.path.join(args.fruit_fly_data_path, subset_name)
+    if not os.path.isdir(subset_path):
+        raise FileNotFoundError("test directory not found: {}".format(subset_path))
+    if not os.path.isdir(fruit_fly_subset_path):
+        raise FileNotFoundError(
+            "fruit-fly test directory not found: {}".format(fruit_fly_subset_path))
 
-        for index, (inputs, wf_truth, ff_truth, names) in enumerate(loader, start=1):
+    dataset = Crowd_qnrf(
+        subset_path, fruit_fly_subset_path, 512, 8, method="val")
+    if args.max_images > 0:
+        dataset = Subset(dataset, range(min(args.max_images, len(dataset))))
+    loader = DataLoader(
+        dataset, batch_size=1, shuffle=False,
+        num_workers=args.num_workers, pin_memory=device.type == "cuda",
+    )
+
+    for index, (inputs, wf_truth, ff_truth, names) in enumerate(loader, start=1):
             name = names[0]
             source_path = image_path_for(subset_path, name)
             source = cv2.imread(source_path)
@@ -210,9 +238,9 @@ def main():
             ff_boxes = []
             if args.mode in ("points", "both"):
                 wf_boxes, wf_normalized = locate_points(
-                    wf_array, source.shape, args.threshold, SPECIES["wf"]["half_box"])
+                    wf_array, source.shape, args.threshold)
                 ff_boxes, ff_normalized = locate_points(
-                    ff_array, source.shape, args.threshold, SPECIES["ff"]["half_box"])
+                    ff_array, source.shape, args.threshold)
 
                 wf_text = os.path.join(output_dirs["wf_points"], "{}_{}.txt".format(subset_name, name))
                 ff_text = os.path.join(output_dirs["ff_points"], "{}_{}.txt".format(subset_name, name))
@@ -221,11 +249,29 @@ def main():
                 print("[SAVE] whitefly positions: {}".format(os.path.abspath(wf_text)), flush=True)
                 print("[SAVE] fruit-fly positions: {}".format(os.path.abspath(ff_text)), flush=True)
 
-                overlay = source.copy()
-                for box in wf_boxes:
-                    cv2.rectangle(overlay, box[:2], box[2:], SPECIES["wf"]["color"], 2)
-                for box in ff_boxes:
-                    cv2.rectangle(overlay, box[:2], box[2:], SPECIES["ff"]["color"], 2)
+                overlay = apply_density_overlay(
+                    source, wf_normalized, args.threshold,
+                    SPECIES["wf"]["color"], args.overlay_alpha,
+                )
+                overlay = apply_density_overlay(
+                    overlay, ff_normalized, args.threshold,
+                    SPECIES["ff"]["color"], args.overlay_alpha,
+                )
+                if args.show_boxes:
+                    for box in wf_boxes:
+                        cv2.rectangle(
+                            overlay, box[:2], box[2:], SPECIES["wf"]["color"], 2)
+                    for box in ff_boxes:
+                        cv2.rectangle(
+                            overlay, box[:2], box[2:], SPECIES["ff"]["color"], 2)
+                cv2.putText(
+                    overlay, "Whitefly", (20, 40), cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0, SPECIES["wf"]["color"], 2, cv2.LINE_AA,
+                )
+                cv2.putText(
+                    overlay, "Fruit fly", (20, 80), cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0, SPECIES["ff"]["color"], 2, cv2.LINE_AA,
+                )
                 visualization = os.path.join(
                     output_dirs["visualizations"], "{}_{}.jpg".format(subset_name, name))
                 cv2.imwrite(visualization, overlay)

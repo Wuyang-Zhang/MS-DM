@@ -42,16 +42,14 @@ def cal_new_size_v2(im_h, im_w, min_size, max_size):
 """
 func: generate the density map.
 points: [num_gt, 2], for each row: [width, height]
-"""   
-#-------------------------------------------------------
+"""
+
 # cv.getGaussianKernel(ksize, sigma[, ktype])
         # Ksize：是光圈大小。 Ksize 值应该是奇数和正数。
         # sigma:Sigma 是高斯标准差。如果它是非正数，它从 ksize 计算为 sigma = 0.3*((ksize-1)*0.5 - 1) + 0.8。
         # ktype：滤波器系数的类型。它可以是 CV_32F 或 CV_64F。
 #-------------------------------------------------------
-
 def gen_density_map_gaussian(im_height, im_width, points, sigma=4):
-
 
     density_map = np.zeros([im_height, im_width], dtype=np.float32)
     h, w = density_map.shape[:2]
@@ -104,7 +102,7 @@ def generate_data(im_path, mat_path, min_size, max_size):
             points[:, 0] = points[:, 0] * rr_w
             points[:, 1] = points[:, 1] * rr_h
 
-    density_map = gen_density_map_gaussian(im_h, im_w, points, sigma=8)  # 针对不同物体大小进行选择  修改  15
+    density_map = gen_density_map_gaussian(im_h, im_w, points, sigma=8)
     return Image.fromarray(im), points, density_map
 
 
@@ -125,7 +123,7 @@ def generate_image(im_path, min_size, max_size):
 #---------------------------------------------------------------------------
 def main(input_dataset_path, output_dataset_path, min_size=384, max_size=1920):
     ori_img_path = os.path.join(input_dataset_path, 'images')
-    ori_anno_path = os.path.join(input_dataset_path, 'mats-1')
+    ori_anno_path = os.path.join(input_dataset_path, 'mats')
 
     for phase in ['train', 'val']:
         sub_save_dir = os.path.join(output_dataset_path, phase)
@@ -145,8 +143,8 @@ def main(input_dataset_path, output_dataset_path, min_size=384, max_size=1920):
 
                 # The Gaussian smoothed density map is just for visualization. It's not used in training.
                 im, points, density_map = generate_data(im_path, mat_path, min_size, max_size) # 调用前面的函数
-                
-                # im.save(im_save_path)
+
+                im.save(im_save_path)
                 gd_save_path = im_save_path.replace('jpg', 'npy')
                 np.save(gd_save_path, points)
                 # dm_save_path = im_save_path.replace('.jpg', '_densitymap.npy')
@@ -160,15 +158,31 @@ def main(input_dataset_path, output_dataset_path, min_size=384, max_size=1920):
             lines = f.readlines()
             for i in lines:
                 i = i.strip().split(' ')[0]
+
                 im_path = os.path.join(ori_img_path, i + '.jpg')
+                mat_path = os.path.join(ori_anno_path, i +'.mat')
+
                 name = os.path.basename(im_path)
                 im_save_path = os.path.join(sub_save_dir, name)
                 print(name)
-                im = generate_image(im_path, min_size, max_size)
+                im, points, density_map = generate_data(im_path, mat_path, min_size, max_size)
+                # im = generate_image(im_path, min_size, max_size)
                 im.save(im_save_path)
+
+                # if not os.path.exists(os.path.join(sub_save_dir, name)):
+                #     im.save(os.path.join(sub_save_dir, name))
+
+
+                #================================================================================
+
+                # im.save(os.path.join(sub_save_dir, name))
+                gd_save_path = im_save_path.replace('jpg', 'npy')
+                np.save(gd_save_path, points)
+                # dm_save_path = im_save_path.replace('.jpg', '_densitymap.npy')
+                # np.save(dm_save_path, density_map)
 
 
 if __name__ == '__main__':
-    input_dataset_path =  r'data'
-    output_dataset_path =  r'data\fruit_fly'   # 存放果蝇的文件夹
+    input_dataset_path =  r'data\raw_test\whitefly'
+    output_dataset_path =  r'data\whitefly'
     main(input_dataset_path, output_dataset_path, min_size=384, max_size=1920)
