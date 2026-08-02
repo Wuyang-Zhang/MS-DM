@@ -19,8 +19,14 @@ def parse_args():
     parser.add_argument(
         "--model-path", default=r"pretrained_models\msdm_final_v3_legacy.pth")
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--modes", nargs="+", choices=("full", "tiled"),
-                        default=("full", "tiled"))
+    parser.add_argument(
+        "--backend", choices=("pytorch", "tensorrt"), default="pytorch")
+    parser.add_argument(
+        "--engine-path", default=r"output\tensorrt\msdm_tiled_fp16.engine")
+    parser.add_argument(
+        "--modes", nargs="+", choices=("full", "tiled"), default=None,
+        help="defaults to full+tiled for PyTorch and tiled for TensorRT",
+    )
     parser.add_argument("--warmup-runs", type=int, default=2)
     parser.add_argument("--benchmark-runs", type=int, default=10)
     parser.add_argument("--tile-size", type=int, default=512)
@@ -180,13 +186,22 @@ def print_mode_averages(rows):
 
 def main():
     args = parse_args()
+    if args.modes is None:
+        args.modes = ("tiled",) if args.backend == "tensorrt" else (
+            "full", "tiled")
     validate_arguments(args)
     images, _ = find_images(args.input_path)
     device = resolve_device(args.device)
-    model = load_model(args.model_path, device)
+    if args.backend == "tensorrt":
+        if device.type != "cuda":
+            raise ValueError("TensorRT backend requires --device cuda")
+        from tools.tensorrt.runtime import TensorRTRunner
+        model = TensorRTRunner(args.engine_path, device)
+    else:
+        model = load_model(args.model_path, device)
     rows = []
-    print("[CONFIG] device: {}; images: {}; modes: {}".format(
-        device, len(images), ", ".join(args.modes)), flush=True)
+    print("[CONFIG] backend: {}; device: {}; images: {}; modes: {}".format(
+        args.backend, device, len(images), ", ".join(args.modes)), flush=True)
     print("[CONFIG] warmup: {}; runs: {}".format(
         args.warmup_runs, args.benchmark_runs), flush=True)
     for image_path in images:

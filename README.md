@@ -14,6 +14,7 @@ MS-DM/
 |-- losses/                       # OT, Sinkhorn, and related losses
 |-- models/                       # DM-Count and MS-DM model definitions
 |-- tools/                        # Data preprocessing utilities and legacy pipeline
+|   `-- tensorrt/                 # ONNX/TensorRT acceleration pipeline
 |-- output/                       # Generated checkpoints, logs, and predictions
 |-- pretrained_models/            # Downloaded pretrained weights
 |-- train.py                      # Training entry point
@@ -336,6 +337,59 @@ For tiled mode, both levels also report tile FPS. Results are saved to
 `output/benchmark/fps.csv` by default. Use `--modes full` or `--modes tiled` to
 benchmark only one mode. When the input directory contains multiple images, an
 `[AVERAGE FPS]` line reports aggregate throughput for each mode.
+
+## TensorRT Acceleration
+
+TensorRT support is tested in the `bisenet` Conda environment with PyTorch
+2.4.1, CUDA 12.4, ONNX 1.21, and TensorRT 10.10. Generated ONNX models and
+engines are stored below `output/tensorrt/` and are not committed. TensorRT
+engines depend on the TensorRT version, GPU architecture, and optimization
+profile, so build them on the deployment machine.
+
+Export the dynamic-shape ONNX model and build the recommended FP16 tiled
+engine. Its default profile accepts `512 x 512` tiles with batch sizes 1--4:
+
+```powershell
+conda activate bisenet
+python -m tools.tensorrt.export_onnx
+python -m tools.tensorrt.build_tensorrt `
+  --profile tiled `
+  --tile-size 512 `
+  --max-batch-size 4
+```
+
+Validate FP16 output accuracy and compare model-forward latency with PyTorch:
+
+```powershell
+python -m tools.tensorrt.validate
+```
+
+Run prediction and the dedicated FPS benchmark with TensorRT:
+
+```powershell
+python predict.py `
+  --backend tensorrt `
+  --engine-path output\tensorrt\msdm_tiled_fp16.engine `
+  --inference-mode tiled `
+  --tile-size 512 `
+  --tile-overlap 64 `
+  --tile-batch-size 4
+
+python benchmark_fps.py `
+  --backend tensorrt `
+  --engine-path output\tensorrt\msdm_tiled_fp16.engine `
+  --modes tiled `
+  --tile-size 512 `
+  --tile-overlap 64 `
+  --tile-batch-size 4
+```
+
+The prediction tile size and batch size must remain inside the profile used to
+build the engine. For dynamic full-image inference, build a separate engine
+with `python -m tools.tensorrt.build_tensorrt --profile full`; a tiled engine
+cannot process arbitrary full-image shapes. See
+[`tools/tensorrt/README.md`](tools/tensorrt/README.md) for the complete file
+guide, execution order, options, tested results, and troubleshooting notes.
 
 ## Model Complexity
 

@@ -43,7 +43,13 @@ def parse_args():
     parser.add_argument("--output-dir", default=r"output\predict")
     parser.add_argument("--device", default="cuda")
     parser.add_argument(
-        "--inference-mode", choices=("full", "tiled"), default="full")
+        "--backend", choices=("pytorch", "tensorrt"), default="pytorch")
+    parser.add_argument(
+        "--engine-path", default=r"output\tensorrt\msdm_tiled_fp16.engine")
+    parser.add_argument(
+        "--inference-mode", choices=("full", "tiled"), default=None,
+        help="defaults to full for PyTorch and tiled for TensorRT",
+    )
     parser.add_argument("--tile-size", type=int, default=512)
     parser.add_argument("--tile-overlap", type=int, default=64)
     parser.add_argument("--tile-batch-size", type=int, default=1)
@@ -154,6 +160,9 @@ def save_visualization(source, wf_density, ff_density, wf_peaks, ff_peaks,
 
 def main():
     args = parse_args()
+    if args.inference_mode is None:
+        args.inference_mode = (
+            "tiled" if args.backend == "tensorrt" else "full")
     if not 0 <= args.threshold <= 255:
         raise ValueError("--threshold must be between 0 and 255")
     if not 0.0 <= args.overlay_alpha <= 1.0:
@@ -165,7 +174,13 @@ def main():
 
     images, input_root = find_images(args.input_path)
     device = resolve_device(args.device)
-    model = load_model(args.model_path, device)
+    if args.backend == "tensorrt":
+        if device.type != "cuda":
+            raise ValueError("TensorRT backend requires --device cuda")
+        from tools.tensorrt.runtime import TensorRTRunner
+        model = TensorRTRunner(args.engine_path, device)
+    else:
+        model = load_model(args.model_path, device)
     directories = output_directories(args.output_dir)
     rows = []
     total_inference_seconds = 0.0
@@ -173,8 +188,8 @@ def main():
     print("[CONFIG] input: {}".format(os.path.abspath(args.input_path)), flush=True)
     print("[CONFIG] images: {}".format(len(images)), flush=True)
     print("[CONFIG] output: {}".format(os.path.abspath(args.output_dir)), flush=True)
-    print("[CONFIG] inference: {}; visualization: {}; boxes: {}".format(
-        args.inference_mode, args.visualization_style,
+    print("[CONFIG] backend: {}; inference: {}; visualization: {}; boxes: {}".format(
+        args.backend, args.inference_mode, args.visualization_style,
         "enabled" if args.show_boxes else "disabled"), flush=True)
 
     for index, image_path in enumerate(images, start=1):
