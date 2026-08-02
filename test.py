@@ -259,9 +259,13 @@ def predict_tiled_image(
 
     density_height = image_height // downsample_ratio
     density_width = image_width // downsample_ratio
-    wf_sum = np.zeros((density_height, density_width), dtype=np.float32)
-    ff_sum = np.zeros_like(wf_sum)
-    weights = np.zeros_like(wf_sum)
+    # Keep every tile output and the complete stitching process on the target
+    # device. Both species are transferred to CPU together only after all
+    # batches have been accumulated and normalized.
+    wf_sum = torch.zeros(
+        (density_height, density_width), dtype=torch.float32, device=device)
+    ff_sum = torch.zeros_like(wf_sum)
+    weights = torch.zeros_like(wf_sum)
 
     for offset in range(0, len(coordinates), tile_batch_size):
         batch_coordinates = coordinates[offset:offset + tile_batch_size]
@@ -271,8 +275,8 @@ def predict_tiled_image(
         ], dim=0).to(device, non_blocking=True)
         with torch.no_grad():
             wf_batch, _, ff_batch, _ = model(tiles)
-        wf_batch = wf_batch[:, 0].cpu().numpy()
-        ff_batch = ff_batch[:, 0].cpu().numpy()
+        wf_batch = wf_batch[:, 0]
+        ff_batch = ff_batch[:, 0]
 
         for tile_index, (y, x) in enumerate(batch_coordinates):
             density_y = y // downsample_ratio
@@ -286,9 +290,11 @@ def predict_tiled_image(
             ff_sum[region] += ff_batch[tile_index]
             weights[region] += 1.0
 
-    if np.any(weights == 0):
-        raise RuntimeError("tiled inference left uncovered density pixels")
-    return wf_sum / weights, ff_sum / weights, len(coordinates)
+    stitched = torch.stack((wf_sum / weights, ff_sum / weights))
+    stitched = stitched.cpu().numpy()
+    if not np.isfinite(stitched).all():
+        raise RuntimeError("tiled inference produced uncovered density pixels")
+    return stitched[0], stitched[1], len(coordinates)
 
 
 def save_positions(path, class_id, boxes):

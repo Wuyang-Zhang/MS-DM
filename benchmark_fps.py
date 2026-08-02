@@ -24,6 +24,10 @@ def parse_args():
     parser.add_argument(
         "--engine-path", default=r"output\tensorrt\msdm_tiled_fp16.engine")
     parser.add_argument(
+        "--disable-cuda-graph", action="store_true",
+        help="disable TensorRT CUDA Graph capture for comparison/debugging",
+    )
+    parser.add_argument(
         "--modes", nargs="+", choices=("full", "tiled"), default=None,
         help="defaults to full+tiled for PyTorch and tiled for TensorRT",
     )
@@ -196,7 +200,9 @@ def main():
         if device.type != "cuda":
             raise ValueError("TensorRT backend requires --device cuda")
         from tools.tensorrt.runtime import TensorRTRunner
-        model = TensorRTRunner(args.engine_path, device)
+        model = TensorRTRunner(
+            args.engine_path, device,
+            use_cuda_graph=not args.disable_cuda_graph)
     else:
         model = load_model(args.model_path, device)
     rows = []
@@ -204,6 +210,9 @@ def main():
         args.backend, device, len(images), ", ".join(args.modes)), flush=True)
     print("[CONFIG] warmup: {}; runs: {}".format(
         args.warmup_runs, args.benchmark_runs), flush=True)
+    if args.backend == "tensorrt":
+        print("[CONFIG] CUDA Graph: {}".format(
+            "disabled" if args.disable_cuda_graph else "enabled"), flush=True)
     for image_path in images:
         for mode in args.modes:
             row = benchmark_image(model, image_path, mode, device, args)

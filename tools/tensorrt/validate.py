@@ -21,6 +21,7 @@ def parse_args():
     parser.add_argument("--tile-size", type=int, default=512)
     parser.add_argument("--warmup-runs", type=int, default=5)
     parser.add_argument("--benchmark-runs", type=int, default=20)
+    parser.add_argument("--disable-cuda-graph", action="store_true")
     return parser.parse_args()
 
 
@@ -48,7 +49,8 @@ def main():
     pytorch_model = build_model_without_random_initialization()
     load_checkpoint(pytorch_model, args.model_path)
     pytorch_model = pytorch_model.cuda().eval()
-    tensorrt_model = TensorRTRunner(args.engine_path)
+    tensorrt_model = TensorRTRunner(
+        args.engine_path, use_cuda_graph=not args.disable_cuda_graph)
 
     def pytorch_call(value):
         with torch.no_grad():

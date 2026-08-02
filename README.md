@@ -389,7 +389,9 @@ build the engine. For dynamic full-image inference, build a separate engine
 with `python -m tools.tensorrt.build_tensorrt --profile full`; a tiled engine
 cannot process arbitrary full-image shapes. See
 [`tools/tensorrt/README.md`](tools/tensorrt/README.md) for the complete file
-guide, execution order, options, tested results, and troubleshooting notes.
+guide, CUDA Graph behavior, execution order, tested results, and
+troubleshooting notes. CUDA Graph is enabled by default for TensorRT and can be
+disabled with `--disable-cuda-graph` for comparison.
 
 ## Model Complexity
 

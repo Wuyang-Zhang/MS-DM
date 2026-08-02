@@ -117,6 +117,28 @@ The tile size must match the tiled engine profile, and the requested batch size
 must not exceed the engine's `--max-batch-size`.
 When `--backend tensorrt` is selected, `predict.py` defaults to tiled inference.
 
+### CUDA Graph
+
+CUDA Graph is enabled by default for the TensorRT backend. For every input
+shape encountered (for example, batches 1 and 4 of `3 x 512 x 512` tiles), the
+runtime allocates stable input/output buffers, performs one TensorRT warm-up,
+and captures the engine execution. Later calls with the same shape copy into
+the cached input buffer and replay the captured graph. This reduces CPU kernel
+launch overhead without changing model outputs.
+
+The first call for each new batch shape includes allocation, warm-up, and graph
+capture time. Keep warm-up runs enabled when measuring FPS. To disable CUDA
+Graph for debugging or comparison, add:
+
+```powershell
+--disable-cuda-graph
+```
+
+On the tested RTX 4060 Laptop GPU, one `512 x 512` tile measured approximately
+`5.501 ms` without CUDA Graph and `5.270 ms` with it, a further latency
+reduction of about 4.2%. The benefit is expected to be smaller than the main
+FP16 TensorRT conversion because CUDA Graph only reduces launch overhead.
+
 ### 5. Benchmark TensorRT
 
 ```powershell
@@ -135,7 +157,15 @@ When `--backend tensorrt` is selected, the benchmark defaults to
 `--modes tiled`. PyTorch continues to default to both full and tiled modes.
 
 For the included `1440 x 1920` example with 20 tiles, a short validation run
-measured approximately 8.99 model-forward images/s and 8.78 overall images/s.
+with CUDA Graph and GPU stitching measured approximately 9.65 model-forward
+images/s and 8.86 overall images/s. Overall throughput also includes tile
+preparation and the final density transfer to CPU.
+
+Tiled density accumulation, overlap weighting, and normalization are performed
+on the GPU. Per-batch outputs are not converted immediately with
+`.cpu().numpy()`; the two completed species maps are stacked and transferred to
+CPU together after all tiles have been stitched. This removes one GPU
+synchronization and two device-to-host transfers per tile batch.
 
 ## Full-Image Profile
 
