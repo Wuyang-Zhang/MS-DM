@@ -4,7 +4,7 @@ pretrained_models/
 data/whitefly/
 data/fruit_fly/
 data/raw_test/
-
+data/predict/
 test_images-pre-result-full/
 
 

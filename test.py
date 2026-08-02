@@ -17,7 +17,7 @@ from models import vgg19
 
 SPECIES = {
     "wf": {"label": "whitefly", "class_id": 1, "color": (0, 0, 255)},
-    "ff": {"label": "fruit-fly", "class_id": 2, "color": (0, 255, 255)},
+    "ff": {"label": "fruit-fly", "class_id": 2, "color": (0, 255, 0)},
 }
 
 
@@ -72,12 +72,29 @@ def parse_args():
         help="maximum images per subset; 0 processes all images",
     )
     parser.add_argument(
-        "--threshold", type=int, default=50,
+        "--threshold", type=int, default=10,
         help="0-255 density threshold used for point localization",
     )
     parser.add_argument(
-        "--overlay-alpha", type=float, default=0.45,
+        "--overlay-alpha", type=float, default=0.3,
         help="density heatmap opacity on the source image (0-1)",
+    )
+    parser.add_argument(
+        "--visualization-style", choices=("points", "density"),
+        default="points",
+        help="draw local density peaks or a smooth density overlay",
+    )
+    parser.add_argument(
+        "--point-radius", type=int, default=2,
+        help="point marker radius on the original image",
+    )
+    parser.add_argument(
+        "--point-alpha", type=float, default=0.6,
+        help="point marker opacity (0-1)",
+    )
+    parser.add_argument(
+        "--peak-min-distance", type=int, default=1,
+        help="local-maximum suppression radius in density-map pixels",
     )
     parser.add_argument(
         "--show-boxes", action="store_true",
@@ -141,21 +158,57 @@ def locate_points(density, image_shape, threshold):
     return boxes, normalized
 
 
+def locate_peaks(density, image_shape, threshold, min_distance):
+    """Map local density maxima to point centers on the original image."""
+    if min_distance < 1:
+        raise ValueError("--peak-min-distance must be at least 1")
+    normalized = normalize_density(density)
+    smoothed = cv2.GaussianBlur(normalized, (3, 3), 0)
+    kernel_size = 2 * min_distance + 1
+    kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
+    local_maximum = smoothed == cv2.dilate(smoothed, kernel)
+    peak_mask = (local_maximum & (smoothed >= threshold)).astype(np.uint8)
+
+    # Collapse flat maximum plateaus to one center point.
+    _, _, _, centroids = cv2.connectedComponentsWithStats(
+        peak_mask, connectivity=8)
+    image_height, image_width = image_shape[:2]
+    density_height, density_width = normalized.shape
+    scale_x = image_width / float(density_width)
+    scale_y = image_height / float(density_height)
+    peaks = []
+    for center_x, center_y in centroids[1:]:
+        peaks.append((
+            min(image_width - 1, max(0, int(round((center_x + 0.5) * scale_x)))),
+            min(image_height - 1, max(0, int(round((center_y + 0.5) * scale_y)))),
+        ))
+    return peaks
+
+
 def apply_density_overlay(
         image, normalized_density, threshold, color, alpha):
-    """Blend one species color over thresholded density-map regions."""
+    """Blend a smoothly resized density map using species-specific color."""
     image_height, image_width = image.shape[:2]
-    source_mask = (normalized_density >= threshold).astype(np.uint8)
-    resized_mask = cv2.resize(
-        source_mask, (image_width, image_height),
-        interpolation=cv2.INTER_NEAREST,
-    ).astype(bool)
-    color_layer = np.empty_like(image)
+    resized_density = cv2.resize(
+        normalized_density, (image_width, image_height),
+        interpolation=cv2.INTER_CUBIC,
+    )
+    strength = resized_density.astype(np.float32) / float(max(threshold, 1))
+    strength = np.clip(strength, 0.0, 1.0)
+    strength[resized_density < threshold] = 0.0
+    alpha_map = (alpha * strength)[:, :, np.newaxis]
+    color_layer = np.empty_like(image, dtype=np.float32)
     color_layer[:] = color
-    blended = cv2.addWeighted(image, 1.0 - alpha, color_layer, alpha, 0.0)
-    result = image.copy()
-    result[resized_mask] = blended[resized_mask]
-    return result
+    blended = image.astype(np.float32) * (1.0 - alpha_map) + color_layer * alpha_map
+    return np.clip(blended, 0, 255).astype(np.uint8)
+
+
+def apply_point_overlay(image, points, color, radius, alpha):
+    """Draw semi-transparent point markers without hiding source objects."""
+    point_layer = image.copy()
+    for point in points:
+        cv2.circle(point_layer, point, radius, color, -1, cv2.LINE_AA)
+    return cv2.addWeighted(point_layer, alpha, image, 1.0 - alpha, 0.0)
 
 
 def tile_starts(length, tile_size, overlap):
@@ -267,8 +320,14 @@ def ensure_output_dirs(root):
 
 def main():
     args = parse_args()
+    if not 0 <= args.threshold <= 255:
+        raise ValueError("--threshold must be between 0 and 255")
     if not 0.0 <= args.overlay_alpha <= 1.0:
         raise ValueError("--overlay-alpha must be between 0 and 1")
+    if args.point_radius <= 0:
+        raise ValueError("--point-radius must be positive")
+    if not 0.0 <= args.point_alpha <= 1.0:
+        raise ValueError("--point-alpha must be between 0 and 1")
     device = resolve_device(args.device)
     output_dirs = ensure_output_dirs(args.output_dir)
     summary_path = os.path.join(args.output_dir, "summary.csv")
@@ -288,9 +347,12 @@ def main():
         )
     print("[CONFIG] boxes: {}".format(
         "enabled" if args.show_boxes else "disabled"), flush=True)
+    print("[CONFIG] visualization: {}".format(
+        args.visualization_style), flush=True)
 
     model = load_model(args.model_path, device)
     rows = []
+    total_inference_seconds = 0.0
 
     subset_name = "test"
     subset_path = os.path.join(args.data_path, subset_name)
@@ -331,6 +393,9 @@ def main():
                 wf_array, ff_array, tile_count = predict_full_image(
                     model, inputs, device)
             elapsed = time.time() - started
+            total_inference_seconds += elapsed
+            image_fps = 1.0 / elapsed if elapsed > 0 else float("inf")
+            tile_fps = tile_count / elapsed if elapsed > 0 else float("inf")
 
             wf_count = float(wf_array.sum())
             ff_count = float(ff_array.sum())
@@ -339,20 +404,29 @@ def main():
 
             print(
                 "[PREDICT] {}/{} {}/{} {} | WF {:.2f}/{:.0f} | FF {:.2f}/{:.0f} | "
-                "tiles {} | {:.2f}s".format(
+                "tiles {} | {:.2f}s | FPS {:.2f} | tile FPS {:.2f}".format(
                     subset_name, name, index, len(loader), name,
-                    wf_count, wf_actual, ff_count, ff_actual, tile_count, elapsed,
+                    wf_count, wf_actual, ff_count, ff_actual, tile_count,
+                    elapsed, image_fps, tile_fps,
                 ),
                 flush=True,
             )
 
             wf_boxes = []
             ff_boxes = []
+            wf_peaks = []
+            ff_peaks = []
             if args.mode in ("points", "both"):
                 wf_boxes, wf_normalized = locate_points(
                     wf_array, source.shape, args.threshold)
                 ff_boxes, ff_normalized = locate_points(
                     ff_array, source.shape, args.threshold)
+                wf_peaks = locate_peaks(
+                    wf_array, source.shape, args.threshold,
+                    args.peak_min_distance)
+                ff_peaks = locate_peaks(
+                    ff_array, source.shape, args.threshold,
+                    args.peak_min_distance)
 
                 wf_text = os.path.join(output_dirs["wf_points"], "{}_{}.txt".format(subset_name, name))
                 ff_text = os.path.join(output_dirs["ff_points"], "{}_{}.txt".format(subset_name, name))
@@ -361,14 +435,22 @@ def main():
                 print("[SAVE] whitefly positions: {}".format(os.path.abspath(wf_text)), flush=True)
                 print("[SAVE] fruit-fly positions: {}".format(os.path.abspath(ff_text)), flush=True)
 
-                overlay = apply_density_overlay(
-                    source, wf_normalized, args.threshold,
-                    SPECIES["wf"]["color"], args.overlay_alpha,
-                )
-                overlay = apply_density_overlay(
-                    overlay, ff_normalized, args.threshold,
-                    SPECIES["ff"]["color"], args.overlay_alpha,
-                )
+                if args.visualization_style == "density":
+                    overlay = apply_density_overlay(
+                        source, wf_normalized, args.threshold,
+                        SPECIES["wf"]["color"], args.overlay_alpha,
+                    )
+                    overlay = apply_density_overlay(
+                        overlay, ff_normalized, args.threshold,
+                        SPECIES["ff"]["color"], args.overlay_alpha,
+                    )
+                else:
+                    overlay = apply_point_overlay(
+                        source, wf_peaks, SPECIES["wf"]["color"],
+                        args.point_radius, args.point_alpha)
+                    overlay = apply_point_overlay(
+                        overlay, ff_peaks, SPECIES["ff"]["color"],
+                        args.point_radius, args.point_alpha)
                 if args.show_boxes:
                     for box in wf_boxes:
                         cv2.rectangle(
@@ -377,11 +459,13 @@ def main():
                         cv2.rectangle(
                             overlay, box[:2], box[2:], SPECIES["ff"]["color"], 2)
                 cv2.putText(
-                    overlay, "Whitefly", (20, 40), cv2.FONT_HERSHEY_SIMPLEX,
+                    overlay, "Whitefly: {:.2f}".format(wf_count),
+                    (20, 40), cv2.FONT_HERSHEY_SIMPLEX,
                     1.0, SPECIES["wf"]["color"], 2, cv2.LINE_AA,
                 )
                 cv2.putText(
-                    overlay, "Fruit fly", (20, 80), cv2.FONT_HERSHEY_SIMPLEX,
+                    overlay, "Fruit fly: {:.2f}".format(ff_count),
+                    (20, 80), cv2.FONT_HERSHEY_SIMPLEX,
                     1.0, SPECIES["ff"]["color"], 2, cv2.LINE_AA,
                 )
                 visualization = os.path.join(
@@ -408,19 +492,21 @@ def main():
                 "image": name,
                 "whitefly_actual": wf_actual,
                 "whitefly_predicted": wf_count,
-                "whitefly_points": len(wf_boxes),
+                "whitefly_points": len(wf_peaks),
                 "fruit_fly_actual": ff_actual,
                 "fruit_fly_predicted": ff_count,
-                "fruit_fly_points": len(ff_boxes),
+                "fruit_fly_points": len(ff_peaks),
                 "inference_seconds": elapsed,
                 "inference_mode": args.inference_mode,
                 "tile_count": tile_count,
+                "fps": image_fps,
+                "tile_fps": tile_fps,
             })
 
     fieldnames = [
         "subset", "image", "whitefly_actual", "whitefly_predicted", "whitefly_points",
         "fruit_fly_actual", "fruit_fly_predicted", "fruit_fly_points",
-        "inference_seconds", "inference_mode", "tile_count",
+        "inference_seconds", "inference_mode", "tile_count", "fps", "tile_fps",
     ]
     with open(summary_path, "w", newline="", encoding="utf-8-sig") as stream:
         writer = csv.DictWriter(stream, fieldnames=fieldnames)
@@ -429,6 +515,12 @@ def main():
 
     print("[SAVE] summary: {}".format(os.path.abspath(summary_path)), flush=True)
     print("[DONE] processed {} images".format(len(rows)), flush=True)
+    if rows and total_inference_seconds > 0:
+        overall_fps = len(rows) / total_inference_seconds
+        total_tiles = sum(row["tile_count"] for row in rows)
+        overall_tile_fps = total_tiles / total_inference_seconds
+        print("[FPS] images: {:.2f}; tiles: {:.2f}; inference time: {:.2f}s".format(
+            overall_fps, overall_tile_fps, total_inference_seconds), flush=True)
     print("[DONE] output root: {}".format(os.path.abspath(args.output_dir)), flush=True)
 
 

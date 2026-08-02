@@ -21,6 +21,7 @@ data/
 |-- raw_test/                     # Preserved high-resolution test sources
 |   |-- whitefly/
 |   `-- fruit_fly/
+|-- predict/                      # Version-controlled prediction examples
 |-- A_Equal_division_of_5_datasets.py
 |-- B_Produce_a_training_set_based_on_the_validation_set.py
 |-- D_split-train-val-test-name-to-txt-1.py
@@ -75,6 +76,33 @@ raw_test/
 This directory is ignored by Git because it contains large image files. The
 documented conversion pipeline is available at
 [`../tools/preprocess/legacy_test_pipeline/README.md`](../tools/preprocess/legacy_test_pipeline/README.md).
+
+### `predict/`
+
+Small, version-controlled example images for demonstrating direct prediction on
+unlabeled inputs. Unlike `raw_test/`, this directory is intentionally committed
+to Git so users can run `predict.py` immediately after cloning the repository.
+
+The included sample is:
+
+```text
+data/predict/IMG_20221230_135744.jpg
+```
+
+Run prediction on the bundled example:
+
+```powershell
+python predict.py
+```
+
+This is equivalent to:
+
+```powershell
+python predict.py --input-path data\predict
+```
+
+The generated files are written under `output/predict/`, which remains ignored
+by Git.
 
 ## Normal Usage
 

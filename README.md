@@ -19,7 +19,9 @@ MS-DM/
 |-- train.py                      # Training entry point
 |-- train_helper.py               # Training and validation routines
 |-- test.py                       # Evaluation on the labeled test split
-`-- predict.py                    # Prediction on unlabeled images
+|-- predict.py                    # Prediction on unlabeled images
+|-- benchmark_fps.py              # Full and tiled FPS benchmark
+`-- profile_model.py              # Parameters, model size, MACs, and FLOPs
 ```
 
 `models/msdm.py` contains the final MS-DM model used by the training and testing scripts. `models/dm_count.py` retains the baseline DM-Count-style model for comparison.
@@ -160,15 +162,46 @@ output/test/
 ```
 
 Each image in `visualizations/` combines both species on the original image.
-Whitefly density regions are red and fruit-fly density regions are yellow. Only
-density values above `--threshold` are blended. Bounding boxes are disabled by
-default because a large connected region can produce an oversized rectangle.
+Whitefly markers are red and fruit-fly markers are green. Point markers are
+semi-transparent by default so the source objects remain visible. The default `points`
+style detects local maxima in the low-resolution density maps and maps their
+centers back to the original image. This avoids the block-like appearance caused
+by nearest-neighbor enlargement of the 1/8-resolution density map. The top-left
+legend displays each species name and its density-sum predicted count.
 
-Generate the combined density visualization without boxes (default):
+Generate point-center visualization without boxes (default):
 
 ```powershell
-python test.py --mode both
+python test.py --mode both --visualization-style points
 ```
+
+Point radius and local-maximum suppression distance are configurable:
+
+```powershell
+python test.py `
+  --visualization-style points `
+  --point-radius 4 `
+  --point-alpha 0.55 `
+  --peak-min-distance 1
+```
+
+`--threshold` sets the minimum normalized peak strength. Peak extraction uses a
+`3 x 3` Gaussian smoothing kernel. `--peak-min-distance 1` applies local-maximum
+suppression over a one-pixel radius in the 1/8-resolution density map, which is
+approximately eight pixels on the original image. `--point-radius` affects only
+the displayed marker size, while `--point-alpha` controls marker opacity.
+
+Generate a smooth density visualization instead:
+
+```powershell
+python test.py `
+  --visualization-style density `
+  --threshold 10 `
+  --overlay-alpha 0.45
+```
+
+The density style uses bicubic interpolation and intensity-weighted opacity,
+rather than enlarging density pixels into fixed `8 x 8` blocks.
 
 Optionally draw bounding boxes:
 
@@ -177,12 +210,13 @@ python test.py --mode both --show-boxes
 ```
 
 When enabled, every box is the minimum axis-aligned rectangle enclosing a
-connected density region, not a fixed-size box. Threshold and overlay opacity
-can also be adjusted:
+connected density region, not a fixed-size box. Boxes can be combined with
+either visualization style:
 
 ```powershell
 python test.py `
   --mode both `
+  --visualization-style density `
   --threshold 10 `
   --overlay-alpha 0.45 `
   --show-boxes
@@ -192,6 +226,13 @@ python test.py `
 
 `predict.py` accepts an ordinary image or a directory of images. It does not
 require `.npy` annotations or the dataset directory structure.
+
+The repository includes a small open-source prediction example under
+`data/predict/`. It is intentionally tracked by Git. Run it directly with:
+
+```powershell
+python predict.py
+```
 
 Predict one image with full-image inference:
 
@@ -219,6 +260,17 @@ component bounding boxes are desired:
 python predict.py --input-path path\to\images --show-boxes
 ```
 
+Direct prediction also defaults to point-center visualization. Select smooth
+density visualization explicitly when preferred:
+
+```powershell
+python predict.py `
+  --input-path path\to\images `
+  --visualization-style density `
+  --threshold 10 `
+  --overlay-alpha 0.45
+```
+
 The default output directory is `output/predict/`:
 
 ```text
@@ -231,8 +283,86 @@ output/predict/
 `-- summary.csv
 ```
 
-`summary.csv` records both predicted counts, connected-region counts, inference
-mode, tile count, and inference time for every image.
+`summary.csv` records both predicted counts, local-maximum point counts,
+connected-region counts, inference mode, tile count, and inference time for
+every image. It also records image FPS and tile FPS.
+
+## FPS Measurement
+
+Both `test.py` and `predict.py` report inference throughput automatically. No
+extra flag is required:
+
+```powershell
+python test.py --inference-mode full
+python test.py --inference-mode tiled --tile-size 512 --tile-overlap 64
+python predict.py --inference-mode tiled --tile-size 512 --tile-overlap 64
+```
+
+Each prediction log contains:
+
+- `FPS`: complete images processed per second (`1 / inference_seconds`).
+- `tile FPS`: model tiles processed per second in tiled mode.
+
+The final `[FPS]` line reports throughput over all processed images. FPS timing
+includes model forward inference and tiled density stitching. Image loading,
+visualization rendering, and file writing are excluded. For a stable comparison,
+run multiple images and compare modes with the same device, tile batch size, and
+input set.
+
+For a dedicated repeatable benchmark, use `benchmark_fps.py`. It tests both
+full-image and tiled inference without rendering or saving prediction outputs:
+
+```powershell
+python benchmark_fps.py `
+  --input-path data\predict `
+  --modes full tiled `
+  --warmup-runs 2 `
+  --benchmark-runs 10 `
+  --tile-size 512 `
+  --tile-overlap 64 `
+  --tile-batch-size 1
+```
+
+The benchmark reports two levels of performance for each mode:
+
+- `forward FPS`: model forward computation only. Input tensors are already on
+  the selected device; CPU transfer, tiled stitching, and output processing are
+  excluded.
+- `overall FPS`: device input transfer, model forward computation, prediction
+  transfer back to CPU, and tiled density stitching. Image decoding and output
+  rendering are excluded.
+
+For tiled mode, both levels also report tile FPS. Results are saved to
+`output/benchmark/fps.csv` by default. Use `--modes full` or `--modes tiled` to
+benchmark only one mode. When the input directory contains multiple images, an
+`[AVERAGE FPS]` line reports aggregate throughput for each mode.
+
+## Model Complexity
+
+Use the standalone profiler to report parameter counts, model storage, MACs,
+and approximate FLOPs for a specified input size:
+
+```powershell
+python profile_model.py --height 512 --width 512 --batch-size 1
+```
+
+Complexity values are device-independent, so the profiler uses CPU by default
+and does not occupy GPU memory. Pass `--device cuda` only if desired.
+
+It loads `pretrained_models\msdm_final_v3_legacy.pth` by default and also
+reports the checkpoint file size. To profile only the model architecture, use:
+
+```powershell
+python profile_model.py --skip-checkpoint
+```
+
+The profiler uses the convention `1 MAC = 2 FLOPs`. It counts convolution,
+linear, batch-normalization, and activation operations. Functional
+interpolation, concatenation, pooling, indexing, and tensor additions are not
+included, so the reported FLOPs are an architecture-level approximation and
+depend on the input resolution and batch size. Because profiling does not
+depend on random parameter values, the script skips the model's historical
+repeated random-initialization pass; checkpoint loading remains strict.
 
 ## Image Size and Tiling
 
